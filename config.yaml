@@ -1,0 +1,24 @@
+name: "Neuron"
+description: "Because I'm sick to death of AppDaemon"
+version: "0.0.0"
+slug: "neuron"
+init: false
+arch:
+  - armhf
+  - armv7
+  - aarch64
+  - amd64
+  - i386
+startup: application
+boot: auto
+options:
+  packages:
+    - jedi_enclave
+schema:
+  packages:
+    - str
+  hass_api_url: str?
+homeassistant_api: true
+map:
+  - addon_config:rw
+  - media:rw

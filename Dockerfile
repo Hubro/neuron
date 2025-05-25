@@ -1,0 +1,29 @@
+FROM python:3-alpine
+
+RUN pip --isolated --no-cache-dir install poetry && \
+    mkdir /app
+
+# Seems like Home Assistant Addons need to run as root, otherwise they can't
+# read their own options. Doesn't seem to be a way around it.
+#
+# RUN adduser -H -S -D neuron && \
+#     id neuron && \
+#     chown neuron /app
+# 
+# USER neuron
+
+WORKDIR /app
+
+ENV POETRY_CONFIG_DIR=/app/.poetry/config
+ENV POETRY_DATA_DIR=/app/.poetry/data
+ENV POETRY_CACHE_DIR=/app/.poetry/cache
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --no-root
+
+COPY . ./
+RUN poetry install --only-root
+
+ENV PYTHONPATH="/config"
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT [ "poetry", "run", "python", "-m", "neuron.main" ]

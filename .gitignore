@@ -1,0 +1,8 @@
+
+# Caches, build output etc.
+__pycache__/
+
+# My own stuff
+/justfile
+/.nvimrc.lua
+/.envrc
