@@ -17,7 +17,6 @@ options:
 schema:
   packages:
     - str
-  hass_api_url: str?
 homeassistant_api: true
 map:
   - addon_config:rw

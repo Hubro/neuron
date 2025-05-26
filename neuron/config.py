@@ -6,6 +6,11 @@ import os
 from dataclasses import dataclass
 
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
+HASS_API_URL = os.environ.get("HOME_ASSISTANT_ADDR", "supervisor")
+HASS_API_TOKEN = (
+    os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HOME_ASSISTANT_TOKEN") or ""
+)
+assert HASS_API_TOKEN, "Home Assistant API token not set"
 
 LOG = logging.getLogger(__name__)
 
@@ -13,7 +18,14 @@ LOG = logging.getLogger(__name__)
 @dataclass
 class Config:
     packages: list[str]
-    hass_api_url: str
+
+    @property
+    def hass_api_url(self):
+        return HASS_API_URL
+
+    @property
+    def hass_api_token(self):
+        return HASS_API_TOKEN
 
 
 def load_config():
@@ -25,5 +37,4 @@ def load_config():
 
     return Config(
         packages=raw_config["packages"],
-        hass_api_url=raw_config["hass_api_url"],
     )

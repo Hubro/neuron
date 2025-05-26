@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import logging
 import rich.logging
+import websockets
 from pathlib import Path
 from types import ModuleType
 
@@ -28,12 +30,14 @@ async def main():
 class Neuron:
     automations: dict[str, Automation]
     config: Config
+    hass_ws: websockets.ClientConnection
 
     def __init__(self) -> None:
         self.automations = {}
         self.config = load_config()
 
     async def start(self):
+        await self.connect_to_hass()
         self.load_automations()
         await self.init_automations()
 
@@ -46,7 +50,42 @@ class Neuron:
             for automation in self.automations.values():
                 await automation.eject()
 
+            LOG.debug("Closing Home Assistant Websocket connection")
+            await self.hass_ws.close()
+            await self.hass_ws.wait_closed()
+
             LOG.info("Bye!")
+
+    async def connect_to_hass(self):
+        LOG.info("Connecting to Home Assistant")
+
+        uri = f"ws://{self.config.hass_api_url}/api/websocket"
+        LOG.debug("Opening Websocket connection: %s", uri)
+        self.hass_ws = await websockets.connect(uri=uri)
+
+        LOG.debug("Waiting for auth request...")
+        request = json.loads(await self.hass_ws.recv(decode=True))
+        assert request["type"] == "auth_required"
+
+        LOG.debug("Sending auth message...")
+        await self.hass_ws.send(
+            json.dumps(
+                {
+                    "type": "auth",
+                    "access_token": self.config.hass_api_token,
+                }
+            )
+        )
+
+        LOG.debug("Awaiting response...")
+        msg = json.loads(await self.hass_ws.recv(decode=True))
+
+        if msg["type"] == "auth_ok":
+            LOG.info("Home Assistant authentication successful")
+        elif msg["type"] == "auth_invalid":
+            raise RuntimeError("Home Assistant authentication failed, check token")
+        else:
+            raise RuntimeError("Unexpected response: %r", msg)
 
     def load_automations(self):
         for package_name in self.config.packages:
