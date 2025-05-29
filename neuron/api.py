@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 __all__ = ["StateChange", "on_state_change", "action"]
 
-_trigger_handlers = []
+_trigger_handlers: list[tuple[dict, StateChangeHandler]] = []
 _neuron: Neuron | None = None
 
 
@@ -87,6 +87,13 @@ def _n() -> Neuron:
         raise RuntimeError("Tried to use automation API before Neuron setup")
 
     return _neuron
+
+
+def _reset():
+    """Returns the API module to a clean initial state"""
+    global _neuron, _trigger_handlers
+    _neuron = None
+    _trigger_handlers = []
 
 
 @dataclass

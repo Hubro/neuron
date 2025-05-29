@@ -48,12 +48,14 @@ class Neuron:
         self.automation_handlers = {}
 
     async def start(self):
+        LOG.info("Starting Neuron!")
+
         await self.connect()
         self.tasks.append(asyncio.create_task(self.handle_messages()))
         self.tasks.append(asyncio.create_task(self.handle_subscriptions()))
 
-        # Any API usage will now target this Neuron instance
-        neuron.api._neuron = self
+        neuron.api._reset()
+        neuron.api._neuron = self  # Any API usage will now target this Neuron instance
 
         self.load_automations()
         await self.init_automations()
