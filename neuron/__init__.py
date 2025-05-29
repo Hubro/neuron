@@ -1,3 +1,3 @@
-from .api import on_state_change
+from .api import StateChange, on_state_change
 
-__all__ = ["on_state_change"]
+__all__ = ["StateChange", "on_state_change"]
