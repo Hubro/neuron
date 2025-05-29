@@ -4,23 +4,27 @@ import asyncio
 import importlib
 import json
 import logging
-import rich.logging
-import websockets
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Callable
 
+import rich.logging
+import websockets
+
+from . import api
 from .config import Config, load_config
-
+from .util import stringify
 
 LOG = logging.getLogger("neuron")
 
 
 async def main():
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         handlers=[rich.logging.RichHandler(rich_tracebacks=True, markup=True)],
         format=r"[blue b]\[%(name)s][/] %(message)s",
     )
+    logging.getLogger("websockets.client").setLevel(logging.INFO)
 
     neuron = Neuron()
 
@@ -31,24 +35,61 @@ class Neuron:
     automations: dict[str, Automation]
     config: Config
     hass_ws: websockets.ClientConnection
+    tasks: list[asyncio.Task]
+
+    msg_handler: asyncio.Task
+    msg_cache: dict[int, list[Any]]
+    msg_id: int
+    msg_event: asyncio.Event
+
+    subscription_handler: asyncio.Task
+    # Trigger subscriptions (JSON encoded) -> subscription id
+    trigger_subscriptions: dict[str, int]
+
+    # Registered handler functions (subscription id -> (automation, handler))
+    automation_handlers: dict[int, list[tuple[Automation, Callable]]]
 
     def __init__(self) -> None:
         self.automations = {}
         self.config = load_config()
+        self.tasks = []
+        self.msg_cache = {}
+        self.msg_id = 2
+        self.msg_event = asyncio.Event()
+        self.trigger_subscriptions = {}
+        self.automation_handlers = {}
 
     async def start(self):
-        await self.connect_to_hass()
+        await self.connect()
+        self.tasks.append(asyncio.create_task(self.handle_messages()))
+        self.tasks.append(asyncio.create_task(self.handle_subscriptions()))
+
         self.load_automations()
         await self.init_automations()
 
         try:
-            while True:
-                await asyncio.sleep(1)
+            done, pending = await asyncio.wait(
+                self.tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                LOG.fatal(
+                    "Background task has exited unexpectedly!",
+                    exc_info=self.msg_handler.exception(),
+                )
+
+            return
         except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        finally:
             LOG.info("Shutting down gracefully")
 
             for automation in self.automations.values():
                 await automation.eject()
+
+            for task in self.tasks:
+                if task.cancel():
+                    await task
 
             LOG.debug("Closing Home Assistant Websocket connection")
             await self.hass_ws.close()
@@ -56,7 +97,41 @@ class Neuron:
 
             LOG.info("Bye!")
 
-    async def connect_to_hass(self):
+    async def handle_messages(self):
+        """Async task for accepting and distributing messages from HASS"""
+
+        try:
+            async for msg in self.hass_ws:
+                message = json.loads(msg)
+                self.msg_cache.setdefault(message["id"], []).append(message)
+
+                LOG.debug("Got message from Home Assistant: %r", message)
+
+                # Wake waiting tasks
+                self.msg_event.set()
+                self.msg_event.clear()
+        except asyncio.CancelledError:
+            return
+
+    async def handle_subscriptions(self):
+        """Async task for keeping track of subscriptions and calling handlers"""
+
+        try:
+            while True:
+                for id, handlers in self.automation_handlers.items():
+                    for msg in self.msg_cache.pop(id, []):
+                        assert msg["type"] == "event"
+                        old = msg["event"]["variables"]["trigger"]["from_state"]
+                        new = msg["event"]["variables"]["trigger"]["to_state"]
+
+                        for _, handler in handlers:
+                            await handler(old["state"], new["state"])
+
+                await self.msg_event.wait()
+        except asyncio.CancelledError:
+            return
+
+    async def connect(self):
         LOG.info("Connecting to Home Assistant")
 
         uri = f"ws://{self.config.hass_api_url}/api/websocket"
@@ -87,6 +162,66 @@ class Neuron:
         else:
             raise RuntimeError("Unexpected response: %r", msg)
 
+        LOG.debug("Enabling coalesced messages feature")
+        await self.hass_ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "type": "supported_features",
+                    "features": {"coalesce_messages": 1},
+                }
+            )
+        )
+
+        msg = json.loads(await self.hass_ws.recv(decode=True))
+        LOG.debug("Response: %r", msg)
+        assert msg["success"]
+
+    async def subscribe_to_trigger(self, trigger: Any) -> int:
+        """Subscribes to a trigger and returns the subscription ID"""
+
+        key = stringify(trigger)
+
+        if id := self.trigger_subscriptions.get(key):
+            LOG.debug("Reusing existing trigger subscription: %r", id)
+            return id
+
+        response = await self.message(
+            {
+                "type": "subscribe_trigger",
+                "trigger": trigger,
+            }
+        )
+        id = response["id"]
+
+        self.trigger_subscriptions[key] = id
+
+        return id
+
+    async def message(self, obj) -> Any:
+        """Sends a message to Home Assistant and returns the response"""
+
+        id = self.msg_id
+        self.msg_id += 1
+
+        await self.hass_ws.send(
+            json.dumps(
+                {
+                    **obj,
+                    "id": id,
+                }
+            )
+        )
+
+        while True:
+            if id in self.msg_cache:
+                msg = self.msg_cache.pop(id)
+                assert len(msg) == 1
+
+                return msg[0]
+
+            await self.msg_event.wait()
+
     def load_automations(self):
         for package_name in self.config.packages:
             LOG.info("Importing package: %s", package_name)
@@ -112,7 +247,15 @@ class Neuron:
 
     async def init_automations(self):
         for automation in self.automations.values():
-            await automation.init()
+            if not automation.loaded:
+                continue
+
+            for trigger, handler in automation.trigger_handlers:
+                id = await self.subscribe_to_trigger(trigger)
+
+                self.automation_handlers.setdefault(id, []).append(
+                    (automation, handler)
+                )
 
 
 class Automation:
@@ -120,69 +263,77 @@ class Automation:
     module: ModuleType
     name: str
     loaded: bool
-    initialized: bool
+    # initialized: bool
+    trigger_handlers: list[tuple[str, Callable]]
 
     def __init__(self, module_name: str):
         self.module_name = module_name
         self.name = module_name.split(".")[-1]
         self.loaded = False
-        self.initialized = False
+        # self.initialized = False
+        self.trigger_handlers = []
 
     def load(self):
         assert not self.loaded
-        assert not self.initialized
+        # assert not self.initialized
+
+        assert not api._trigger_handlers
 
         try:
             self.module = importlib.import_module(self.module_name)
         except Exception:
             LOG.exception("Failed to load module %r", self.module_name)
 
+        self.trigger_handlers = api._trigger_handlers.copy()
+        api._trigger_handlers.clear()
+
         self.name = getattr(self.module, "NAME", self.module_name)
         self.loaded = True
 
         LOG.info("Loaded automation: %s", self.module_name)
 
-    async def init(self):
-        """Runs the automation's init function"""
+    # async def init(self):
+    #     """Runs the automation's init function"""
 
-        assert self.loaded
-        assert not self.initialized
+    #     assert self.loaded
+    #     assert not self.initialized
 
-        init = getattr(self.module, "init", None)
+    #     init = getattr(self.module, "init", None)
 
-        if not init:
-            LOG.error("Automation module has no init function: %s", self.module_name)
-            return
+    #     if not init:
+    #         LOG.error("Automation module has no init function: %s", self.module_name)
+    #         return
 
-        LOG.info("Initializing automation: %s", self.module_name)
+    #     LOG.info("Initializing automation: %s", self.module_name)
 
-        await init()  # TODO: Capture event handlers and stuff
+    #     await init()  # TODO: Capture event handlers and stuff
 
-        self.initialized = True
+    #     self.initialized = True
 
     async def eject(self):
-        """Undoes init, used for graceful shutdown and code reloading"""
+        """Whatever must be done to "unload" the module"""
 
-        assert self.initialized
+        assert self.loaded
+        # assert self.initialized
 
         LOG.info("Ejecting automation: %s", self.module_name)
 
         # TODO: <-
 
-        self.initialized = False
+        # self.initialized = False
 
     async def reload(self):
-        """Reloads the automation module from source and reinitializes it"""
+        """Reloads the automation module from source"""
 
         assert self.loaded
-        assert self.initialized
+        # assert self.initialized
 
         await self.eject()
 
         LOG.info("Reloading module: %s", self.module_name)
         importlib.reload(self.module)
 
-        await self.init()
+        # await self.init()
 
 
 if __name__ == "__main__":
