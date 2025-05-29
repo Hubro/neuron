@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias
 if TYPE_CHECKING:
     from neuron.core import Neuron
 
+__all__ = ["StateChange", "on_state_change", "action"]
+
 _trigger_handlers = []
 _neuron: Neuron | None = None
 
@@ -55,7 +57,7 @@ def on_state_change(
 
 
 async def action(
-    platform: str,
+    domain: str,
     name: str,
     /,
     entity_id: str | list[str] | None = None,
@@ -64,12 +66,16 @@ async def action(
     device_id: str | None = None,
     label_id: str | None = None,
     data: dict[str, Any] | None = None,
+    return_response=False,
 ) -> Any:
-    assert entity_id is not None and all(
-        x is None for x in [area_id, device_id, label_id]
-    ), "Targets other than entity_id not implemented"
+    assert not any([area_id, device_id, label_id]), (
+        "Targets other than entity_id not implemented"
+    )
+    assert not return_response, "return_response not implemented"
 
-    # TODO: Implement
+    target = {"entity_id": entity_id} if entity_id else None
+
+    return await _n().perform_action(domain, name, target=target, data=data)
 
 
 async def turn_on(entity_id: str):

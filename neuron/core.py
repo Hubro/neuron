@@ -10,7 +10,9 @@ from typing import Any, Callable
 
 import websockets
 
-from . import api
+import neuron.api
+
+from .api import StateChange
 from .config import Config, load_config
 from .util import stringify
 
@@ -50,6 +52,9 @@ class Neuron:
         self.tasks.append(asyncio.create_task(self.handle_messages()))
         self.tasks.append(asyncio.create_task(self.handle_subscriptions()))
 
+        # Any API usage will now target this Neuron instance
+        neuron.api._neuron = self
+
         self.load_automations()
         await self.init_automations()
 
@@ -61,7 +66,7 @@ class Neuron:
             for task in done:
                 LOG.fatal(
                     "Background task has exited unexpectedly!",
-                    exc_info=self.msg_handler.exception(),
+                    exc_info=task.exception(),
                 )
 
             return
@@ -106,7 +111,7 @@ class Neuron:
             while True:
                 for id, handlers in self.automation_handlers.items():
                     for msg in self.msg_cache.pop(id, []):
-                        state_change = api.StateChange.from_event_message(msg)
+                        state_change = StateChange.from_event_message(msg)
 
                         for _, handler in handlers:
                             await handler(state_change)
@@ -191,20 +196,43 @@ class Neuron:
 
         return id
 
+    async def perform_action(
+        self,
+        domain: str,
+        name: str,
+        /,
+        target: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> Any:
+        message_body: dict[str, Any] = {
+            "type": "call_service",
+            "domain": domain,
+            # The WebSockets API still uses the outdated "service" terminology
+            "service": name,
+        }
+
+        if data:
+            message_body["service_data"] = data
+        if target:
+            message_body["target"] = target
+
+        response = await self.message(message_body)
+
+        if not response["success"]:
+            LOG.error("Failed to perform action: %s", response["error"]["message"])
+            return
+
     async def message(self, obj) -> Any:
         """Sends a message to Home Assistant and returns the response"""
 
         id = self.msg_id
         self.msg_id += 1
 
-        await self.hass_ws.send(
-            json.dumps(
-                {
-                    **obj,
-                    "id": id,
-                }
-            )
-        )
+        msg = {**obj, "id": id}
+
+        LOG.debug("Sending message to Home Assistant: %r", msg)
+
+        await self.hass_ws.send(json.dumps(msg))
 
         while True:
             if id in self.msg_cache:
@@ -270,15 +298,15 @@ class Automation:
         assert not self.loaded
         # assert not self.initialized
 
-        assert not api._trigger_handlers
+        assert not neuron.api._trigger_handlers
 
         try:
             self.module = importlib.import_module(self.module_name)
         except Exception:
             LOG.exception("Failed to load module %r", self.module_name)
 
-        self.trigger_handlers = api._trigger_handlers.copy()
-        api._trigger_handlers.clear()
+        self.trigger_handlers = neuron.api._trigger_handlers.copy()
+        neuron.api._trigger_handlers.clear()
 
         self.name = getattr(self.module, "NAME", self.module_name)
         self.loaded = True
