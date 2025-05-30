@@ -7,7 +7,6 @@ import os
 import sys
 
 import rich.logging
-import watchdog
 
 from neuron.util import debounce
 
@@ -72,7 +71,10 @@ async def auto_reload_task():
                 return
 
             main = "neuron/main.py"
-            if main in event.src_path or main in event.dest_path:
+            if event.src_path == main or event.dest_path == main:
+                return
+
+            if event.event_type in ("opened", "closed_no_write"):
                 return
 
             if any(path.endswith(".py") for path in [event.src_path, event.dest_path]):
