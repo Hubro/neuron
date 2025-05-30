@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import logging
 import os
+import signal
 import sys
 
 import rich.logging
@@ -13,6 +14,12 @@ from neuron.util import debounce
 LOG = logging.getLogger("neuron")
 
 _reload_event = asyncio.Event()
+
+
+def sigusr1_handler():
+    from neuron.util import log_tasks_and_threads
+
+    log_tasks_and_threads()
 
 
 async def main():
@@ -32,6 +39,12 @@ async def main():
 
     asyncio.create_task(auto_reload_task(), name="neuron_core_auto_reload")
 
+    loop = asyncio.get_running_loop()
+    signal.signal(
+        signal.SIGUSR1,
+        lambda *args: loop.call_soon_threadsafe(sigusr1_handler),
+    )
+
     try:
         while True:
             from .core import Neuron
@@ -39,7 +52,15 @@ async def main():
             neuron = Neuron()
             neuron_task = asyncio.create_task(neuron.start(), name="neuron")
 
-            await _reload_event.wait()
+            await asyncio.wait(
+                [asyncio.create_task(_reload_event.wait()), neuron_task],  # type: ignore
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if neuron_task.done() and (e := neuron_task.exception()):
+                LOG.fatal("Neuron crashed", exc_info=e)
+                return
+
             _reload_event.clear()
 
             neuron_task.cancel()
