@@ -28,6 +28,7 @@ async def main():
         format=r"[blue b]\[%(name)s][/] %(message)s",
     )
     logging.getLogger("websockets.client").setLevel(logging.INFO)
+    logging.getLogger("watchdog").setLevel(logging.INFO)
 
     asyncio.create_task(auto_reload_task(), name="neuron_core_auto_reload")
 
