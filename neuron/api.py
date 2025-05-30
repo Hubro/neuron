@@ -105,11 +105,12 @@ class StateChange:
     def from_event_message(cls, msg: Any) -> Self:
         assert msg["type"] == "event"
 
-        event = msg["event"]["variables"]["trigger"]
+        trigger = msg["event"]["variables"]["trigger"]
+        assert trigger["platform"] == "state"
 
         return cls(
-            from_state=event["from_state"]["state"],
-            to_state=event["to_state"]["state"],
+            from_state=trigger["from_state"]["state"],
+            to_state=trigger["to_state"]["state"],
         )
 
         # Example state change event:

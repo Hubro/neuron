@@ -25,17 +25,15 @@ class Neuron:
     hass_ws: websockets.ClientConnection
     tasks: list[asyncio.Task]
 
-    msg_handler: asyncio.Task
     msg_cache: dict[int, list[Any]]
     msg_id: int
     msg_event: asyncio.Event
 
-    subscription_handler: asyncio.Task
-    # Trigger subscriptions (JSON encoded) -> subscription id
-    trigger_subscriptions: dict[str, int]
+    event_subscriptions: dict[str, int]  # dict[<event name>, <subscription_id>]
+    trigger_subscriptions: dict[str, int]  # dict[<trigger (json)>, <subscription_id>]
 
     # Registered handler functions (subscription id -> (automation, handler))
-    automation_handlers: dict[int, list[tuple[Automation, Callable]]]
+    event_handlers: dict[int, list[tuple[Automation, Callable]]]
 
     def __init__(self) -> None:
         self.automations = {}
@@ -44,15 +42,16 @@ class Neuron:
         self.msg_cache = {}
         self.msg_id = 2
         self.msg_event = asyncio.Event()
+        self.event_subscriptions = {}
         self.trigger_subscriptions = {}
-        self.automation_handlers = {}
+        self.event_handlers = {}
 
     async def start(self):
         LOG.info("Starting Neuron!")
 
         await self.connect()
-        self.tasks.append(asyncio.create_task(self.handle_messages()))
-        self.tasks.append(asyncio.create_task(self.handle_subscriptions()))
+        self.tasks.append(asyncio.create_task(self.websocket_message_handler_task()))
+        self.tasks.append(asyncio.create_task(self.event_subscription_handler_task()))
 
         neuron.api._reset()
         neuron.api._neuron = self  # Any API usage will now target this Neuron instance
@@ -77,9 +76,6 @@ class Neuron:
         finally:
             LOG.info("Shutting down gracefully")
 
-            for automation in self.automations.values():
-                await automation.eject()
-
             for task in self.tasks:
                 if task.cancel():
                     await task
@@ -90,7 +86,7 @@ class Neuron:
 
             LOG.info("Bye!")
 
-    async def handle_messages(self):
+    async def websocket_message_handler_task(self):
         """Async task for accepting and distributing messages from HASS"""
 
         try:
@@ -106,21 +102,49 @@ class Neuron:
         except asyncio.CancelledError:
             return
 
-    async def handle_subscriptions(self):
+    async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
 
         try:
             while True:
-                for id, handlers in self.automation_handlers.items():
+                for id in self.event_handlers.keys():
                     for msg in self.msg_cache.pop(id, []):
-                        state_change = StateChange.from_event_message(msg)
-
-                        for _, handler in handlers:
-                            await handler(state_change)
+                        await self.dispatch_event(msg)
 
                 await self.msg_event.wait()
         except asyncio.CancelledError:
             return
+
+    async def dispatch_event(self, event_msg: dict[str, Any]):
+        assert event_msg["type"] == "event"
+        handlers = self.event_handlers.get(event_msg["id"])
+
+        if not handlers:
+            LOG.warning("Got event message with no subscribers: %r", event_msg)
+            return
+
+        is_event = "data" in event_msg["event"]
+        is_trigger = "variables" in event_msg["event"]
+        handler_kwargs: dict[str, Any] = {}
+
+        if is_event:
+            raise NotImplementedError()
+
+        elif is_trigger:
+            trigger = event_msg["event"]["variables"]["trigger"]
+            platform = trigger["platform"]
+
+            match platform:
+                case "state":
+                    handler_kwargs["change"] = StateChange.from_event_message(event_msg)
+                case _:
+                    handler_kwargs["trigger"] = trigger
+
+        else:
+            raise RuntimeError("Unrecognized event message: %r", event_msg)
+
+        for _, handler in handlers:
+            await handler(**handler_kwargs)
 
     async def connect(self):
         LOG.info("Connecting to Home Assistant")
@@ -276,9 +300,7 @@ class Neuron:
             for trigger, handler in automation.trigger_handlers:
                 id = await self.subscribe_to_trigger(trigger)
 
-                self.automation_handlers.setdefault(id, []).append(
-                    (automation, handler)
-                )
+                self.event_handlers.setdefault(id, []).append((automation, handler))
 
 
 class Automation:
@@ -286,20 +308,16 @@ class Automation:
     module: ModuleType
     name: str
     loaded: bool
-    # initialized: bool
-    trigger_handlers: list[tuple[str, Callable]]
+    trigger_handlers: list[tuple[dict, Callable]]
 
     def __init__(self, module_name: str):
         self.module_name = module_name
         self.name = module_name.split(".")[-1]
         self.loaded = False
-        # self.initialized = False
         self.trigger_handlers = []
 
     def load(self):
         assert not self.loaded
-        # assert not self.initialized
-
         assert not neuron.api._trigger_handlers
 
         try:
@@ -314,46 +332,3 @@ class Automation:
         self.loaded = True
 
         LOG.info("Loaded automation: %s", self.module_name)
-
-    # async def init(self):
-    #     """Runs the automation's init function"""
-
-    #     assert self.loaded
-    #     assert not self.initialized
-
-    #     init = getattr(self.module, "init", None)
-
-    #     if not init:
-    #         LOG.error("Automation module has no init function: %s", self.module_name)
-    #         return
-
-    #     LOG.info("Initializing automation: %s", self.module_name)
-
-    #     await init()  # TODO: Capture event handlers and stuff
-
-    #     self.initialized = True
-
-    async def eject(self):
-        """Whatever must be done to "unload" the module"""
-
-        assert self.loaded
-        # assert self.initialized
-
-        LOG.info("Ejecting automation: %s", self.module_name)
-
-        # TODO: <-
-
-        # self.initialized = False
-
-    async def reload(self):
-        """Reloads the automation module from source"""
-
-        assert self.loaded
-        # assert self.initialized
-
-        await self.eject()
-
-        LOG.info("Reloading module: %s", self.module_name)
-        importlib.reload(self.module)
-
-        # await self.init()
