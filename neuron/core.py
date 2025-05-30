@@ -137,6 +137,8 @@ class Neuron:
             match platform:
                 case "state":
                     handler_kwargs["change"] = StateChange.from_event_message(event_msg)
+                case "time":
+                    pass
                 case _:
                     handler_kwargs["trigger"] = trigger
 

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias
 if TYPE_CHECKING:
     from neuron.core import Neuron
 
-__all__ = ["StateChange", "on_state_change", "action"]
+__all__ = ["StateChange", "on_state_change", "action", "daily"]
 
 _trigger_handlers: list[tuple[dict, StateChangeHandler]] = []
 _neuron: Neuron | None = None
@@ -50,6 +50,16 @@ def on_state_change(
         trigger["for"] = f"{hours:02}:{minutes:02}:{seconds:02}"
 
     def decorator(handler: StateChangeHandler):
+        _trigger_handlers.append((trigger, handler))
+        return handler
+
+    return decorator
+
+
+def daily(at: str):
+    trigger = {"trigger": "time", "at": at}
+
+    def decorator(handler: Callable):
         _trigger_handlers.append((trigger, handler))
         return handler
 
