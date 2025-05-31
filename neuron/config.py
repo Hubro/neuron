@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from functools import cache
 
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
 HASS_API_URL = os.environ.get("HOME_ASSISTANT_ADDR", "supervisor")
@@ -28,9 +29,8 @@ class Config:
         return HASS_API_TOKEN
 
 
+@cache
 def load_config():
-    global config
-
     with open(CONFIG_PATH) as f:
         raw_config = json.load(f)
         LOG.info("Loaded config: %r", raw_config)

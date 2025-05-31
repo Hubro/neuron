@@ -9,6 +9,8 @@ from typing import Any, Awaitable, Callable
 
 import orjson
 
+from .config import load_config
+
 LOG = logging.getLogger(__name__)
 
 if "TRACE" in os.environ:
@@ -43,24 +45,31 @@ def first_relevant_frame(frame: FrameType) -> FrameType:
     return frame
 
 
+def terse_module_path(path: str) -> str:
+    config = load_config()
+
+    for package in config.packages:
+        if len(split := path.split(f"{package}/")) > 1:
+            return f"{package}/{split[-1]}"
+
+    if len(split := path.split("neuron/")) > 1:
+        return f"neuron/{split[-1]}"
+
+    if len(split := path.split("site-packages/")) > 1:
+        return split[-1]
+
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if len(split := path.split(f"/lib/python{version}/")) > 1:
+        return split[-1]
+
+    return path
+
+
 def log_tasks_and_threads():
     threads = sorted(threading.enumerate(), key=lambda x: x.name)
     tasks = sorted(asyncio.all_tasks(), key=lambda x: x.get_name())
 
     frames = sys._current_frames()
-
-    def terse_path(path: str) -> str:
-        if len(split := path.split("site-packages/")) > 1:
-            return split[-1]
-
-        if len(split := path.split("neuron/")) > 1:
-            return f"neuron/{split[-1]}"
-
-        version = f"{sys.version_info.major}.{sys.version_info.minor}"
-        if len(split := path.split(f"/lib/python{version}/")) > 1:
-            return split[-1]
-
-        return path
 
     def fmt_thread(thread: threading.Thread) -> str:
         name = f"[yellow]{thread.name}[/]"
@@ -68,7 +77,7 @@ def log_tasks_and_threads():
 
         assert thread.ident is not None
         frame = first_relevant_frame(frames[thread.ident])
-        file = terse_path(frame.f_code.co_filename)
+        file = terse_module_path(frame.f_code.co_filename)
         ln = frame.f_code.co_firstlineno
         func = frame.f_code.co_qualname
         details = f"running [blue bold]{func}[/] at [green]{file}:{ln}[/]"
@@ -79,7 +88,7 @@ def log_tasks_and_threads():
         status = "[red]done[/]" if task.done() else "[green]running[/]"
 
         frame = task.get_stack()[-1]
-        file = terse_path(frame.f_code.co_filename)
+        file = terse_module_path(frame.f_code.co_filename)
         ln = frame.f_code.co_firstlineno
         func = frame.f_code.co_qualname
         details = f"running [bold blue]{func}[/] at [green]{file}:{ln}[/]"
