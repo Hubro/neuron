@@ -47,9 +47,9 @@ async def main():
 
     try:
         while True:
-            from .core import Neuron
+            core = importlib.import_module("neuron.core")
 
-            neuron = Neuron()
+            neuron = core.Neuron()
             neuron_task = asyncio.create_task(neuron.start(), name="neuron")
 
             await asyncio.wait(
@@ -59,14 +59,21 @@ async def main():
 
             if neuron_task.done() and (e := neuron_task.exception()):
                 LOG.fatal("Neuron crashed", exc_info=e)
-                return
+                await _reload_event.wait()
 
             _reload_event.clear()
 
             neuron_task.cancel()
-            await neuron_task
+            if not neuron_task.done():
+                await neuron_task
 
-            reload_neuron()
+            while True:
+                try:
+                    reload_neuron()
+                    break
+                except Exception as e:
+                    LOG.exception("Failed to reload neuron")
+                    await _reload_event.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
 
