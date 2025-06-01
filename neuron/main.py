@@ -59,7 +59,6 @@ async def main():
                 ],  # type: ignore
                 return_when=asyncio.FIRST_COMPLETED,
             )
-
             _reload_event.clear()
 
             neuron_task.cancel()
@@ -68,6 +67,9 @@ async def main():
             except Exception as e:
                 LOG.fatal("Neuron crashed", exc_info=e)
                 await _reload_event.wait()
+                _reload_event.clear()
+            except asyncio.CancelledError:
+                pass  # Ignore CancelledError coming from the Neuron task
 
             while True:
                 try:
@@ -76,6 +78,7 @@ async def main():
                 except Exception:
                     LOG.exception("Failed to reload neuron")
                     await _reload_event.wait()
+                    _reload_event.clear()
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
 
