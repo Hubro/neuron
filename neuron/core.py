@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import itertools
-import json
 import logging
 import sys
 from dataclasses import dataclass, field
@@ -11,28 +10,23 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Iterator, cast, overload
 
-import websockets
-
 import neuron.api
-from neuron.watch import watch_automation_modules
 
 from .api import StateChange
 from .config import Config, load_config
+from .hass import HASS
 from .util import stringify, terse_module_path
+from .watch import watch_automation_modules
 
 LOG = logging.getLogger(__name__)
 
 
 class Neuron:
+    config: Config
+    hass: HASS
     automations: dict[str, Automation]
     packages: list[Path]  # Packages we've loaded automations from
-    config: Config
-    hass_ws: websockets.ClientConnection
     tasks: list[asyncio.Task]
-
-    msg_cache: dict[int, list[Any]]
-    msg_id: int
-    msg_event: asyncio.Event
 
     subscriptions: Subscriptions
 
@@ -40,28 +34,28 @@ class Neuron:
         self.automations = {}
         self.packages = []
         self.config = load_config()
+        self.hass = HASS(self.config.hass_api_url, self.config.hass_api_token)
         self.tasks = []
-        self.msg_cache = {}
-        self.msg_id = 2
-        self.msg_event = asyncio.Event()
         self.subscriptions = Subscriptions()
 
     async def start(self):
         LOG.info("Starting Neuron!")
 
-        await self.connect()
+        await self.hass.connect()
 
         start_task = lambda task: self.tasks.append(
             asyncio.create_task(task(), name=f"neuron-{task.__name__}")
         )
-        start_task(self.websocket_message_handler_task)
+        start_task(self.hass.message_handler_task)
         start_task(self.event_subscription_handler_task)
         start_task(self.auto_reload_automations_task)
 
         neuron.api._reset()
         neuron.api._neuron = self  # Any API usage will now target this Neuron instance
 
-        await self.load_automations()
+        # Load automations in a separate task so we can proceed with monitoring
+        # the core tasks
+        asyncio.create_task(self.load_automations(), name="neuron-load_automations")
 
         try:
             done, pending = await asyncio.wait(
@@ -92,72 +86,9 @@ class Neuron:
                 await task
 
             LOG.debug("Closing Home Assistant Websocket connection")
-            await self.hass_ws.close()
-            await self.hass_ws.wait_closed()
+            await self.hass.disconnect()
 
             LOG.info("Bye!")
-
-    async def connect(self):
-        LOG.info("Connecting to Home Assistant")
-
-        uri = f"ws://{self.config.hass_api_url}/api/websocket"
-        LOG.debug("Opening Websocket connection: %s", uri)
-        self.hass_ws = await websockets.connect(uri=uri)
-
-        LOG.debug("Waiting for auth request...")
-        request = json.loads(await self.hass_ws.recv(decode=True))
-        assert request["type"] == "auth_required"
-
-        LOG.debug("Sending auth message...")
-        await self.hass_ws.send(
-            json.dumps(
-                {
-                    "type": "auth",
-                    "access_token": self.config.hass_api_token,
-                }
-            )
-        )
-
-        LOG.debug("Awaiting response...")
-        msg = json.loads(await self.hass_ws.recv(decode=True))
-
-        if msg["type"] == "auth_ok":
-            LOG.info("Home Assistant authentication successful")
-        elif msg["type"] == "auth_invalid":
-            raise RuntimeError("Home Assistant authentication failed, check token")
-        else:
-            raise RuntimeError("Unexpected response: %r", msg)
-
-        LOG.debug("Enabling coalesced messages feature")
-        await self.hass_ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "type": "supported_features",
-                    "features": {"coalesce_messages": 1},
-                }
-            )
-        )
-
-        msg = json.loads(await self.hass_ws.recv(decode=True))
-        LOG.debug("Response: %r", msg)
-        assert msg["success"]
-
-    async def websocket_message_handler_task(self):
-        """Async task for accepting and distributing messages from HASS"""
-
-        try:
-            async for msg in self.hass_ws:
-                message = json.loads(msg)
-                self.msg_cache.setdefault(message["id"], []).append(message)
-
-                LOG.debug("Got message from Home Assistant: %r", message)
-
-                # Wake waiting tasks
-                self.msg_event.set()
-                self.msg_event.clear()
-        except asyncio.CancelledError:
-            return
 
     async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
@@ -165,10 +96,10 @@ class Neuron:
         try:
             while True:
                 for subscription in self.subscriptions:
-                    for msg in self.msg_cache.pop(subscription.id, []):
+                    for msg in self.hass.messages.pop(subscription.id, []):
                         await self.dispatch_event(msg)
 
-                await self.msg_event.wait()
+                await self.hass.messages
         except asyncio.CancelledError:
             return
 
@@ -287,7 +218,12 @@ class Neuron:
         automation.load()
 
         for trigger, handler in automation.trigger_handlers:
-            subscription = await self.subscribe_to_trigger(trigger)
+            subscription = self.subscriptions.get(trigger)
+
+            if not subscription:
+                id = await self.hass.subscribe_to_trigger(trigger)
+                subscription = Subscription(id, trigger=trigger)
+
             subscription.add_handler(automation, handler)
 
             automation.subscriptions.add(subscription.id)
@@ -306,37 +242,6 @@ class Neuron:
         del self.automations[automation.module_name]
         sys.modules.pop(automation.module_name)
 
-    async def subscribe_to_trigger(self, trigger: dict[str, Any]) -> Subscription:
-        """Subscribes to a trigger and returns the Subscription"""
-
-        key = stringify(trigger)
-
-        if subscription := self.subscriptions.get(key):
-            LOG.debug("Reusing existing trigger subscription: %r", subscription.id)
-            return subscription
-
-        response = await self.message(
-            {
-                "type": "subscribe_trigger",
-                "trigger": trigger,
-            }
-        )
-        id = response["id"]
-
-        if not response["success"]:
-            LOG.error(
-                "Failed to subscribe to trigger %r: %s",
-                key,
-                response["error"]["message"],
-            )
-
-        LOG.debug("Subscribed to trigger (id=%d): %s", id, key)
-
-        subscription = Subscription(id, trigger=trigger)
-        self.subscriptions.add(subscription)
-
-        return subscription
-
     async def prune_subscriptions(self):
         """Unsubscribes from all events for which there are no remaining handlers"""
 
@@ -346,61 +251,8 @@ class Neuron:
                     "Subscription %r no longer has any handlers, unsubscribing",
                     subscription.id,
                 )
-                await self.unsubscribe(subscription.id)
+                await self.hass.unsubscribe(subscription.id)
                 del self.subscriptions[subscription]
-
-    async def unsubscribe(self, subscription_id: int):
-        response = await self.message(
-            {"type": "unsubscribe_events", "subscription": subscription_id}
-        )
-        assert response["success"]
-
-    async def perform_action(
-        self,
-        domain: str,
-        name: str,
-        /,
-        target: dict[str, Any] | None = None,
-        data: dict[str, Any] | None = None,
-    ):
-        message_body: dict[str, Any] = {
-            "type": "call_service",
-            "domain": domain,
-            # The WebSockets API still uses the outdated "service" terminology
-            "service": name,
-        }
-
-        if data:
-            message_body["service_data"] = data
-        if target:
-            message_body["target"] = target
-
-        response = await self.message(message_body)
-
-        if not response["success"]:
-            LOG.error("Failed to perform action: %s", response["error"]["message"])
-            return
-
-    async def message(self, obj) -> Any:
-        """Sends a message to Home Assistant and returns the response"""
-
-        id = self.msg_id
-        self.msg_id += 1
-
-        msg = {**obj, "id": id}
-
-        LOG.debug("Sending message to Home Assistant: %r", msg)
-
-        await self.hass_ws.send(json.dumps(msg))
-
-        while True:
-            if id in self.msg_cache:
-                msg = self.msg_cache.pop(id)
-                assert len(msg) == 1
-
-                return msg[0]
-
-            await self.msg_event.wait()
 
 
 class Subscriptions:
@@ -421,7 +273,7 @@ class Subscriptions:
             yield subscription
 
     @overload
-    def __getitem__(self, key: int | str) -> Subscription:
+    def __getitem__(self, key: int | str | dict[str, Any]) -> Subscription:
         """Returns a subscription by its ID or event/trigger"""
         ...
 
@@ -431,18 +283,22 @@ class Subscriptions:
         ...
 
     def __getitem__(
-        self, key: int | str | Automation
+        self, key: int | str | dict[str, Any] | Automation
     ) -> Subscription | set[Subscription]:
         if isinstance(key, int):
             return self._subscriptions[key]
         elif isinstance(key, str):
             return self._event_trigger_map[key]
+        elif isinstance(key, dict):
+            return self._event_trigger_map[stringify(key)]
         else:
             automation = key
             return {self._subscriptions[id] for id in automation.subscriptions}
 
     @overload
-    def get[T](self, key: int | str, default: T = None) -> Subscription | T:
+    def get[T](
+        self, key: int | str | dict[str, Any], default: T = None
+    ) -> Subscription | T:
         """Returns a subscription by its ID or event/trigger"""
         ...
 
@@ -452,7 +308,7 @@ class Subscriptions:
         ...
 
     def get[T](
-        self, key: int | str | Automation, default: T = None
+        self, key: int | str | dict[str, Any] | Automation, default: T = None
     ) -> Subscription | set[Subscription] | T:
         try:
             return self[key]
@@ -464,6 +320,8 @@ class Subscriptions:
             return key in self._subscriptions
         elif isinstance(key, str):
             return key in self._event_trigger_map
+        elif isinstance(key, dict):
+            return stringify(key) in self._event_trigger_map
         else:
             automation = key
             return any((id in self._subscriptions) for id in automation.subscriptions)
