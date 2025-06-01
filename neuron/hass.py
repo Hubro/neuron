@@ -19,14 +19,14 @@ class HASS:
     NB: "connect" must be called before any other function.
     """
 
-    hass_address: str
+    websocket_uri: str
     token: str
     messages: Messages
     _ws: websockets.ClientConnection | None
     _handler_task_started: bool
 
-    def __init__(self, hass_address: str, token: str) -> None:
-        self.hass_address = hass_address
+    def __init__(self, websocket_uri: str, token: str) -> None:
+        self.websocket_uri = websocket_uri
         self.token = token
         self.messages = Messages()
         self._ws = None
@@ -42,9 +42,8 @@ class HASS:
     async def connect(self):
         LOG.info("Connecting to Home Assistant")
 
-        uri = f"ws://{self.hass_address}/api/websocket"
-        LOG.debug("Opening Websocket connection: %s", uri)
-        self._ws = await websockets.connect(uri=uri)
+        LOG.debug("Opening Websocket connection: %s", self.websocket_uri)
+        self._ws = await websockets.connect(uri=self.websocket_uri)
 
         LOG.debug("Waiting for auth request...")
         request = orjson.loads(await self._ws.recv())

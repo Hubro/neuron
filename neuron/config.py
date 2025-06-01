@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from functools import cache
 
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
-HASS_API_URL = os.environ.get("HOME_ASSISTANT_ADDR", "supervisor")
+HASS_WEBSOCKET_URI = os.environ.get(
+    "HASS_WEBSOCKET_URI", "ws://supervisor/core/websocket"
+)
 HASS_API_TOKEN = (
     os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HOME_ASSISTANT_TOKEN") or ""
 )
@@ -21,8 +23,8 @@ class Config:
     packages: list[str]
 
     @property
-    def hass_api_url(self):
-        return HASS_API_URL
+    def hass_websocket_uri(self):
+        return HASS_WEBSOCKET_URI
 
     @property
     def hass_api_token(self):

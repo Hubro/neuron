@@ -35,7 +35,7 @@ class Neuron:
         self.automations = {}
         self.packages = []
         self.config = load_config()
-        self.hass = HASS(self.config.hass_api_url, self.config.hass_api_token)
+        self.hass = HASS(self.config.hass_websocket_uri, self.config.hass_api_token)
         self.tasks = []
         self.subscriptions = Subscriptions()
         self._stop = asyncio.Event()
