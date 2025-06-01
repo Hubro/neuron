@@ -43,6 +43,7 @@ class Neuron:
     async def start(self):
         LOG.info("Starting Neuron!")
 
+        await self.load_packages()
         await self.hass.connect()
 
         start_task = lambda task, name=None: self.tasks.append(
@@ -163,10 +164,7 @@ class Neuron:
         except asyncio.CancelledError:
             return
 
-    async def load_automations(self):
-        # TODO: Load automations concurrently in separate tasks. Establishing
-        # subscriptions is an async operation so it's efficient to do it
-        # concurrently.
+    async def load_packages(self):
         for package_name in self.config.packages:
             LOG.info("Importing package: %s", package_name)
 
@@ -179,6 +177,11 @@ class Neuron:
             package_path = Path(package.__path__[0]).resolve()
             self.packages.append(package_path)
 
+    async def load_automations(self):
+        # TODO: Load automations concurrently in separate tasks. Establishing
+        # subscriptions is an async operation so it's efficient to do it
+        # concurrently.
+        for package_path in self.packages:
             for module_path in package_path.glob("automations/*.py"):
                 if module_path.name == "__init__.py":
                     continue
@@ -199,9 +202,7 @@ class Neuron:
             if not module_path.exists():
                 # Module was deleted
                 if automation := automation_module_path_map.get(module_path):
-                    LOG.info(
-                        "Going to unload deleted automation: %s", automation.module_name
-                    )
+                    LOG.info("Unloading deleted automation: %s", automation.module_name)
                     await self.eject_automation(automation)
                 else:
                     LOG.warning(
@@ -209,15 +210,13 @@ class Neuron:
                     )
             elif automation := automation_module_path_map.get(module_path):
                 # Module was modified
-                LOG.info(
-                    "Going to reload modified automation: %s", automation.module_name
-                )
+                LOG.info("Reloading modified automation: %s", automation.module_name)
                 await self.eject_automation(automation)
                 await self.load_automation(module_path)
             else:
                 # Module was added
                 LOG.info(
-                    "Going to add new automation: %s",
+                    "Adding new automation: %s",
                     terse_module_path(str(module_path)),
                 )
                 await self.load_automation(module_path)
@@ -259,7 +258,7 @@ class Neuron:
         automation.subscriptions.add(subscription.id)
 
     async def eject_automation(self, automation: Automation):
-        LOG.debug("Ejecting automation: %s", automation.module_name)
+        LOG.info("Ejecting automation: %s", automation.module_name)
 
         subscriptions = self.subscriptions.get(automation, [])
 

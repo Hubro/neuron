@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from pathlib import Path
 from typing import AsyncGenerator, Callable, cast
 
@@ -36,6 +35,7 @@ async def watch_automation_modules(
     observer.setName("neuron-automation-module-watcher")
 
     for path in packages:
+        LOG.debug("Watching %s", path)
         observer.schedule(
             SourceChangeHandler(loop, touch_paths),
             path=str(path / "automations"),
