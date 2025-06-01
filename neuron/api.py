@@ -85,7 +85,7 @@ async def action(
 
     target = {"entity_id": entity_id} if entity_id else None
 
-    return await _n().perform_action(domain, name, target=target, data=data)
+    return await _n().hass.perform_action(domain, name, target=target, data=data)
 
 
 async def turn_on(entity_id: str):

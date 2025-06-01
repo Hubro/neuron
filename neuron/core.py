@@ -219,15 +219,29 @@ class Neuron:
         automation.load()
 
         for trigger, handler in automation.trigger_handlers:
-            subscription = self.subscriptions.get(trigger)
+            await self.subscribe(automation, handler, to=trigger)
 
-            if not subscription:
-                id = await self.hass.subscribe_to_trigger(trigger)
-                subscription = Subscription(id, trigger=trigger)
+    async def subscribe(
+        self,
+        automation: Automation,
+        handler: Callable,
+        *,
+        to: str | dict[str, Any],
+    ):
+        if isinstance(to, str):
+            raise NotImplementedError()
 
-            subscription.add_handler(automation, handler)
+        trigger = to
+        subscription = self.subscriptions.get(trigger)
 
-            automation.subscriptions.add(subscription.id)
+        if not subscription:
+            id = await self.hass.subscribe_to_trigger(trigger)
+            subscription = Subscription(id, trigger=trigger)
+
+        subscription.add_handler(automation, handler)
+        self.subscriptions.add(subscription)
+
+        automation.subscriptions.add(subscription.id)
 
     async def eject_automation(self, automation: Automation):
         LOG.info("Ejecting automation: %s", automation.module_name)
