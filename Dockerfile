@@ -23,7 +23,9 @@ RUN poetry install --no-root
 COPY . ./
 RUN poetry install --only-root
 
-ENV PYTHONPATH="/config"
+# Poetry overrides PYTHONPATH, so this doesn't work :(
+# ENV PYTHONPATH="/config"
+
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT [ "poetry", "run", "python", "-m", "neuron.main" ]
+ENTRYPOINT [ "poetry", "run", "python", "-m", "neuron" ]
