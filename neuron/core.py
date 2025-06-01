@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import itertools
-import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -92,7 +91,11 @@ class Neuron:
             LOG.info("Shutting down background tasks")
             for task in self.tasks:
                 task.cancel()
-                await task
+
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
             LOG.info("Closing Home Assistant Websocket connection")
             await self.hass.disconnect()
