@@ -15,10 +15,11 @@ import neuron.api
 from .api import StateChange
 from .config import Config, load_config
 from .hass import HASS
+from .logging import get_logger
 from .util import stringify, terse_module_path
 from .watch import watch_automation_modules
 
-LOG = logging.getLogger(__name__)
+LOG = get_logger(__name__)
 
 
 class Neuron:
@@ -265,6 +266,9 @@ class Subscriptions:
         # Maps event/trigger to subscription. Since triggers are JSON encoded
         # objects, there is no key overlap with event names.
         self._event_trigger_map: dict[str, Subscription] = {}
+
+        # TODO: Add _automation_subscription_map and remove "subscriptions"
+        # from automation class
 
     def __iter__(self) -> Iterator[Subscription]:
         """Iterate over all subscriptions"""

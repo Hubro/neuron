@@ -6,9 +6,11 @@ from typing import AsyncGenerator, Callable, cast
 import watchdog.events
 import watchdog.observers
 
+from neuron.logging import get_logger
+
 from .util import terse_module_path
 
-LOG = logging.getLogger(__name__)
+LOG = get_logger(__name__)
 
 
 async def watch_automation_modules(

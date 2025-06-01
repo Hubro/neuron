@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any, cast
 
 import orjson
 import websockets
 
+from neuron.logging import get_logger
+
 from .util import stringify
 
-LOG = logging.getLogger(__name__)
+LOG = get_logger(__name__)
 
 
 class HASS:
@@ -82,6 +83,11 @@ class HASS:
 
         self._handler_task_started = True
 
+        # TODO: Remove subscription IDs from the API entirely. When connection
+        # to Home Assistant is lost, log the error and attempt to reconnect.
+        # When connection is eventually reestablished, resubscribe to all
+        # triggers/events. Ideally, it should be possible to restart Home
+        # Assistant with absolutely no impact on Neuron automations.
         try:
             async for msg in self.ws:
                 message = orjson.loads(msg)

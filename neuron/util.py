@@ -1,6 +1,4 @@
 import asyncio
-import logging
-import os
 import sys
 import threading
 from functools import wraps
@@ -10,13 +8,9 @@ from typing import Any, Awaitable, Callable
 import orjson
 
 from .config import load_config
+from .logging import get_logger
 
-LOG = logging.getLogger(__name__)
-
-if "TRACE" in os.environ:
-    trace = lambda *args: LOG.log(5, *args)  # noqa: E731
-else:
-    trace = lambda *args: None  # noqa: E731
+LOG = get_logger(__name__)
 
 
 def stringify(obj: Any) -> str:
@@ -113,14 +107,14 @@ def debounce(seconds: float):
             nonlocal task
 
             if task and not task.done():
-                trace("(debounce) Cancelling task %r", task.get_name())
+                LOG.trace("(debounce) Cancelling task %r", task.get_name())
                 task.cancel()
 
             task = asyncio.create_task(
                 delay(seconds, fn, *args, **kwargs),
                 name=f"debounce-{fn.__name__}",
             )
-            trace("(debounce) Created task %r", task.get_name())
+            LOG.trace("(debounce) Created task %r", task.get_name())
 
         return wrapped
 
@@ -130,13 +124,13 @@ def debounce(seconds: float):
 async def delay(seconds: float, fn: Callable[..., Awaitable[None]], /, *args, **kwargs):
     """Use with asyncio.create_task to execute a function after a delay"""
     try:
-        trace("(delay) Calling function %r in %r seconds", fn.__name__, seconds)
+        LOG.trace("(delay) Calling function %r in %r seconds", fn.__name__, seconds)
         await asyncio.sleep(seconds)
 
         # Run the function in a new task so it won't be cancelled together with
         # the delay task
-        trace("(delay) Calling function %r now!", fn.__name__)
+        LOG.trace("(delay) Calling function %r now!", fn.__name__)
         asyncio.create_task(fn(*args, **kwargs), name=f"delay-{fn.__name__}")  # type: ignore
     except asyncio.CancelledError:
-        trace("(delay) Delay for %r cancelled", fn.__name__)
+        LOG.trace("(delay) Delay for %r cancelled", fn.__name__)
         pass
