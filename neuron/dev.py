@@ -15,12 +15,17 @@ from neuron.util import debounce
 LOG = get_logger("neuron.dev")
 
 _reload_event = asyncio.Event()
+_exit_event = asyncio.Event()
 
 
 def sigusr1_handler():
     from neuron.util import log_tasks_and_threads
 
     log_tasks_and_threads()
+
+
+def terminate_handler():
+    _exit_event.set()
 
 
 async def main():
@@ -46,6 +51,15 @@ async def main():
         lambda *args: loop.call_soon_threadsafe(sigusr1_handler),
     )
 
+    signal.signal(
+        signal.SIGINT,
+        lambda *args: loop.call_soon_threadsafe(terminate_handler),
+    )
+    signal.signal(
+        signal.SIGTERM,
+        lambda *args: loop.call_soon_threadsafe(terminate_handler),
+    )
+
     try:
         while True:
             core = importlib.import_module("neuron.core")
@@ -56,6 +70,7 @@ async def main():
             await asyncio.wait(
                 [
                     asyncio.create_task(_reload_event.wait()),
+                    asyncio.create_task(_exit_event.wait()),
                     neuron_task,
                 ],  # type: ignore
                 return_when=asyncio.FIRST_COMPLETED,
@@ -71,6 +86,9 @@ async def main():
                 _reload_event.clear()
             except asyncio.CancelledError:
                 pass  # Ignore CancelledError coming from the Neuron task
+
+            if _exit_event.is_set():
+                return
 
             while True:
                 try:

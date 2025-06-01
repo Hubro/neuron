@@ -1,7 +1,12 @@
+import asyncio
 import logging
+import signal
 import sys
 
 from .core import Neuron
+from .logging import get_logger
+
+LOG = get_logger(__name__)
 
 
 async def run_neuron():
@@ -9,4 +14,15 @@ async def run_neuron():
         level=logging.INFO,
         stream=sys.stdout,
     )
-    await Neuron().start()
+    neuron = Neuron()
+
+    def terminate_handler(signal_number: int, _frame):
+        LOG.info(
+            "Received %s", "SIGINT" if signal_number is signal.SIGINT else "SIGTERM"
+        )
+        asyncio.get_running_loop().call_soon_threadsafe(neuron.stop)
+
+    signal.signal(signal.SIGINT, terminate_handler)
+    signal.signal(signal.SIGTERM, terminate_handler)
+
+    await neuron.start()

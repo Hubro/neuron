@@ -28,8 +28,9 @@ class Neuron:
     automations: dict[str, Automation]
     packages: list[Path]  # Packages we've loaded automations from
     tasks: list[asyncio.Task]
-
     subscriptions: Subscriptions
+
+    _stop: asyncio.Event
 
     def __init__(self) -> None:
         self.automations = {}
@@ -38,18 +39,20 @@ class Neuron:
         self.hass = HASS(self.config.hass_api_url, self.config.hass_api_token)
         self.tasks = []
         self.subscriptions = Subscriptions()
+        self._stop = asyncio.Event()
 
     async def start(self):
         LOG.info("Starting Neuron!")
 
         await self.hass.connect()
 
-        start_task = lambda task: self.tasks.append(
-            asyncio.create_task(task(), name=f"neuron-{task.__name__}")
+        start_task = lambda task, name=None: self.tasks.append(
+            asyncio.create_task(task(), name=(name or f"neuron-{task.__name__}"))
         )
         start_task(self.hass.message_handler_task)
         start_task(self.event_subscription_handler_task)
         start_task(self.auto_reload_automations_task)
+        start_task(self._stop.wait, name="neuron_wait-for-stop-signal")
 
         neuron.api._reset()
         neuron.api._neuron = self  # Any API usage will now target this Neuron instance
@@ -66,6 +69,8 @@ class Neuron:
             for task in done:
                 if e := task.exception():
                     raise e
+                elif task.get_name() == "neuron_wait-for-stop-signal":
+                    pass
                 else:
                     raise RuntimeError(
                         f"Background task {task.get_name()} has exited unexpectedly!"
@@ -77,19 +82,26 @@ class Neuron:
         finally:
             LOG.info("Shutting down gracefully")
 
+            LOG.info("Ejecting all automation modules")
             for automation in list(self.automations.values()):
                 await self.eject_automation(automation)
 
+            LOG.info("Unsubscribing from events")
             await self.prune_subscriptions()
 
+            LOG.info("Shutting down background tasks")
             for task in self.tasks:
                 task.cancel()
                 await task
 
-            LOG.debug("Closing Home Assistant Websocket connection")
+            LOG.info("Closing Home Assistant Websocket connection")
             await self.hass.disconnect()
 
             LOG.info("Bye!")
+
+    def stop(self):
+        """Signals Neuron to shut down gracefully"""
+        self._stop.set()
 
     async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
@@ -244,7 +256,7 @@ class Neuron:
         automation.subscriptions.add(subscription.id)
 
     async def eject_automation(self, automation: Automation):
-        LOG.info("Ejecting automation: %s", automation.module_name)
+        LOG.debug("Ejecting automation: %s", automation.module_name)
 
         subscriptions = self.subscriptions.get(automation, [])
 
