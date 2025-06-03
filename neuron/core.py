@@ -122,7 +122,12 @@ class Neuron:
 
     async def dispatch_event(self, event_msg: dict[str, Any]):
         assert event_msg["type"] == "event"
-        id: int = event_msg["id"]
+
+        # Note: The ID of a subscription can not be relied upon, since it will
+        # change if/when we have to reconnect to Home Assistant and
+        # re-establish all the subscriptions. Deleting it here makes sure
+        # automations don't accidentally use it for something.
+        id: int = event_msg.pop("id")
 
         if id not in self.subscriptions:
             LOG.warning("Got event message with no subscribers: %r", event_msg)
@@ -255,8 +260,6 @@ class Neuron:
         subscription.add_handler(automation, handler)
         self.subscriptions.add(subscription)
 
-        automation.subscriptions.add(subscription.id)
-
     async def eject_automation(self, automation: Automation):
         LOG.info("Ejecting automation: %s", automation.module_name)
 
@@ -295,8 +298,7 @@ class Subscriptions:
         # objects, there is no key overlap with event names.
         self._event_trigger_map: dict[str, Subscription] = {}
 
-        # TODO: Add _automation_subscription_map and remove "subscriptions"
-        # from automation class
+        self._automation_map: dict[Automation, set[Subscription]] = {}
 
     def __iter__(self) -> Iterator[Subscription]:
         """Iterate over all subscriptions"""
@@ -324,8 +326,7 @@ class Subscriptions:
         elif isinstance(key, dict):
             return self._event_trigger_map[stringify(key)]
         else:
-            automation = key
-            return {self._subscriptions[id] for id in automation.subscriptions}
+            return self._automation_map[key].copy()
 
     @overload
     def get[T](
@@ -355,17 +356,15 @@ class Subscriptions:
         elif isinstance(key, dict):
             return stringify(key) in self._event_trigger_map
         else:
-            automation = key
-            return any((id in self._subscriptions) for id in automation.subscriptions)
+            return key in self._automation_map
 
     def __delitem__(self, key: int | Subscription | Automation):
-        """Deletes the given subscription or all subscriptions from an automation"""
+        """Deletes the given subscription or all subscriptions of an automation"""
 
         if isinstance(key, Automation):
             automation = key
 
-            for id in automation.subscriptions:
-                subscription = self[id]
+            for subscription in self._automation_map[automation]:
                 del subscription[automation]
 
         else:
@@ -380,6 +379,9 @@ class Subscriptions:
     def add(self, subscription: Subscription):
         self._subscriptions[subscription.id] = subscription
         self._event_trigger_map[subscription.key] = subscription
+
+        for automation in subscription.automations:
+            self._automation_map.setdefault(automation, set()).add(subscription)
 
 
 @dataclass(frozen=True)
@@ -426,7 +428,13 @@ class Subscription:
         return cast(str, self.event or stringify(self.trigger))
 
     @property
+    def automations(self) -> list[Automation]:
+        """Returns all automations with handlers for this subscription"""
+        return list(self._handlers.keys())
+
+    @property
     def handlers(self) -> list[Callable]:
+        """Returns all handlers for this subscription"""
         return list(itertools.chain(*self._handlers.values()))
 
     def add_handler(self, automation: Automation, handler: Callable):
@@ -450,7 +458,6 @@ class Automation:
     module_path: Path
     loaded: bool
     trigger_handlers: list[tuple[dict, Callable]]
-    subscriptions: set[int]
 
     def __init__(self, module_path: Path):
         package_path = module_path.parent.parent
@@ -458,7 +465,6 @@ class Automation:
         self.module_path = module_path
         self.loaded = False
         self.trigger_handlers = []
-        self.subscriptions = set()
 
     def __hash__(self) -> int:
         return hash(self.module_name)
