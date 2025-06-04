@@ -179,8 +179,14 @@ class Neuron:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
 
         for handler in handlers:
-            kwargs = filter_keyword_args(handler, handler_kwargs)
-            await handler(**kwargs)
+            try:
+                kwargs = filter_keyword_args(handler, handler_kwargs)
+                await handler(**kwargs)
+            except Exception:
+                logger = get_logger(handler.__module__)
+                logger.exception(
+                    "Failed to execute subscription handler %r", handler.__name__
+                )
 
     async def auto_reload_automations_task(self):
         try:
