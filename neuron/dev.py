@@ -16,6 +16,7 @@ LOG = get_logger("neuron.dev")
 
 _reload_event = asyncio.Event()
 _exit_event = asyncio.Event()
+_terminate = False
 
 
 def sigusr1_handler():
@@ -25,7 +26,14 @@ def sigusr1_handler():
 
 
 def terminate_handler():
-    _exit_event.set()
+    global _terminate
+
+    # If Neuron locks up during shutdown, another signal will force exit the process
+    if _terminate:
+        sys.exit(0)
+    else:
+        _exit_event.set()
+        _terminate = True
 
 
 async def main():
