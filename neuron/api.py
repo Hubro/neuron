@@ -10,7 +10,14 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias
 if TYPE_CHECKING:
     from neuron.core import Neuron
 
-__all__ = ["StateChange", "on_state_change", "action", "daily"]
+__all__ = [
+    "on_state_change",
+    "daily",
+    "action",
+    "turn_on",
+    "turn_off",
+    "StateChange",
+]
 
 _trigger_handlers: list[tuple[dict, StateChangeHandler]] = []
 _neuron: Neuron | None = None
@@ -20,7 +27,7 @@ def on_state_change(
     entity_id: str | list[str],
     from_state: str | None = None,
     to_state: str | None = None,
-    duration: timedelta | int | None = None,
+    duration: timedelta | int | str | None = None,
 ):
     """Decorator for registering a state change handler"""
 
@@ -35,10 +42,9 @@ def on_state_change(
         trigger["to"] = to_state
     if duration:
         if isinstance(duration, int):
-            hours = 0
-            minutes = 0
-            seconds = duration
-        else:
+            duration = timedelta(seconds=duration)
+
+        if isinstance(duration, timedelta):
             seconds = floor(duration.total_seconds())
 
             hours = seconds // (60 * 60)
@@ -47,7 +53,11 @@ def on_state_change(
             minutes = seconds // 60
             seconds %= 60
 
-        trigger["for"] = f"{hours:02}:{minutes:02}:{seconds:02}"
+            duration = f"{hours:02}:{minutes:02}:{seconds:02}"
+
+        assert isinstance(duration, str)
+
+        trigger["for"] = duration
 
     def decorator(handler: StateChangeHandler):
         _trigger_handlers.append((trigger, handler))
@@ -83,13 +93,20 @@ async def action(
     )
     assert not return_response, "return_response not implemented"
 
+    # TODO: Use the automation's logger to log the action call
+    # logger.info("Performing action %s.%s on entity %r", domain, name, entity_id)
+
     target = {"entity_id": entity_id} if entity_id else None
 
     return await _n().hass.perform_action(domain, name, target=target, data=data)
 
 
-async def turn_on(entity_id: str):
-    await action("homeassistant", "turn_on", entity_id)
+async def turn_on(entity_id: str, **kwargs):
+    await action("homeassistant", "turn_on", entity_id, data=kwargs)
+
+
+async def turn_off(entity_id: str, **kwargs):
+    await action("homeassistant", "turn_off", entity_id, data=kwargs)
 
 
 def _n() -> Neuron:
