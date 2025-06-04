@@ -219,4 +219,6 @@ class StateChange:
         # }
 
 
-StateChangeHandler: TypeAlias = Callable[[StateChange], Awaitable[None]]
+StateChangeHandler: TypeAlias = (
+    Callable[[StateChange], Awaitable[None]] | Callable[[], Awaitable[None]]
+)

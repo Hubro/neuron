@@ -15,7 +15,13 @@ from .api import StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .logging import get_logger
-from .util import stringify, terse_module_path, wait_event
+from .util import (
+    filter_keyword_args,
+    has_keyword_arg,
+    stringify,
+    terse_module_path,
+    wait_event,
+)
 from .watch import watch_automation_modules
 
 LOG = get_logger(__name__)
@@ -173,7 +179,8 @@ class Neuron:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
 
         for handler in handlers:
-            await handler(**handler_kwargs)
+            kwargs = filter_keyword_args(handler, handler_kwargs)
+            await handler(**kwargs)
 
     async def auto_reload_automations_task(self):
         try:

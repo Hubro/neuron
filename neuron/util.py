@@ -3,9 +3,8 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 from functools import wraps
-from inspect import iscoroutine
 from types import FrameType
-from typing import Any, Awaitable, Callable, Coroutine
+from typing import Any, Awaitable, Callable
 
 import orjson
 
@@ -17,6 +16,15 @@ LOG = get_logger(__name__)
 
 def stringify(obj: Any) -> str:
     return orjson.dumps(obj, option=orjson.OPT_SORT_KEYS).decode()
+
+
+def has_keyword_arg(fn: Callable, name: str):
+    return name in fn.__code__.co_varnames
+
+
+def filter_keyword_args(fn: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Returns a dict with only the keyword arguments that fn accepts"""
+    return {key: value for key, value in kwargs.items() if has_keyword_arg(fn, key)}
 
 
 def first_relevant_frame(frame: FrameType) -> FrameType:
