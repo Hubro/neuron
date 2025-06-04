@@ -310,7 +310,10 @@ class Neuron:
         await self.prune_subscriptions()
 
         del self.automations[automation.module_name]
-        sys.modules.pop(automation.module_name)
+
+        # Module might have failed to load
+        if automation.module_name in sys.modules:
+            sys.modules.pop(automation.module_name)
 
     async def prune_subscriptions(self):
         """Unsubscribes from all events for which there are no remaining handlers"""
