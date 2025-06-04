@@ -1,9 +1,11 @@
 import asyncio
 import sys
 import threading
+from contextlib import asynccontextmanager
 from functools import wraps
+from inspect import iscoroutine
 from types import FrameType
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Coroutine
 
 import orjson
 
@@ -134,3 +136,28 @@ async def delay(seconds: float, fn: Callable[..., Awaitable[None]], /, *args, **
     except asyncio.CancelledError:
         LOG.trace("(delay) Delay for %r cancelled", fn.__name__)
         pass
+
+
+@asynccontextmanager
+async def wait_event(*events: asyncio.Event):
+    """Yields the first async event to be set
+
+    Usage:
+
+        async with wait_event(new_message, reconnected) as event:
+            if event is new_message:
+                continue
+
+            if event is reconnected:
+                ...
+    """
+
+    map = {asyncio.create_task(event.wait()): event for event in events}
+
+    done, pending = await asyncio.wait(map.keys(), return_when=asyncio.FIRST_COMPLETED)
+    assert len(done) == 1
+
+    for task in pending:
+        task.cancel()
+
+    yield map[done.pop()]

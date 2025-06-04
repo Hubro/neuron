@@ -15,7 +15,7 @@ from .api import StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .logging import get_logger
-from .util import stringify, terse_module_path
+from .util import stringify, terse_module_path, wait_event
 from .watch import watch_automation_modules
 
 LOG = get_logger(__name__)
@@ -110,13 +110,28 @@ class Neuron:
     async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
 
+        new_message = self.hass.messages.new_message_event()
+        reconnected = self.hass.reconnected_event()
+
         try:
             while True:
                 for subscription in self.subscriptions:
                     for msg in self.hass.messages.pop(subscription.id, []):
                         await self.dispatch_event(msg)
 
-                await self.hass.messages
+                async with wait_event(new_message, reconnected) as event:
+                    if event is new_message:
+                        pass
+
+                    if event is reconnected:
+                        LOG.info(
+                            "Reconnected to Home Assistant, restarting subscriptions"
+                        )
+                        self.subscriptions = Subscriptions()
+
+                        for automation in self.automations.values():
+                            await self.establish_subscriptions(automation)
+
         except asyncio.CancelledError:
             return
 
@@ -236,6 +251,16 @@ class Neuron:
         self.automations[automation.module_name] = automation
 
         automation.load()
+
+        await self.establish_subscriptions(automation)
+
+    async def establish_subscriptions(self, automation: Automation):
+        if automation in self.subscriptions:
+            LOG.error(
+                "Subscriptions already established for automation %r",
+                automation.module_name,
+            )
+            return
 
         for trigger, handler in automation.trigger_handlers:
             await self.subscribe(automation, handler, to=trigger)

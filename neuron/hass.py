@@ -24,6 +24,8 @@ class HASS:
     messages: Messages
     _ws: websockets.ClientConnection | None
     _handler_task_started: bool
+    _reconnected_events: list[asyncio.Event]
+    _new_message_event: asyncio.Event
 
     def __init__(self, websocket_uri: str, token: str) -> None:
         self.websocket_uri = websocket_uri
@@ -31,6 +33,8 @@ class HASS:
         self.messages = Messages()
         self._ws = None
         self._handler_task_started = False
+        self._reconnected_events = []
+        self._new_message_event = self.messages.new_message_event()
 
     @property
     def ws(self) -> websockets.ClientConnection:
@@ -77,22 +81,54 @@ class HASS:
         await self.ws.close()
         await self.ws.wait_closed()
 
+    async def reconnect(self):
+        self._handler_task_started = False
+        self.messages.reset()
+        LOG.info("Attempting to reconnect to Home Assistant...")
+
+        wait = 1
+        max_wait = 10
+
+        while True:
+            try:
+                await self.connect()
+                break
+            except Exception as e:
+                LOG.error("Failed to reconnect to Home Assistant: %s", e)
+                await asyncio.sleep(wait)
+
+                wait = min(wait * 2, max_wait)
+
+        LOG.info("Connection re-established!")
+
+        for event in self._reconnected_events:
+            event.set()
+            event.clear()
+
+    def reconnected_event(self) -> asyncio.Event:
+        event = asyncio.Event()
+        self._reconnected_events.append(event)
+        return event
+
     async def message_handler_task(self):
         """Async task for accepting and distributing messages from HASS"""
 
-        self._handler_task_started = True
+        async def process_messages():
+            while True:
+                self._handler_task_started = True
 
-        # TODO: Remove subscription IDs from the API entirely. When connection
-        # to Home Assistant is lost, log the error and attempt to reconnect.
-        # When connection is eventually reestablished, resubscribe to all
-        # triggers/events. Ideally, it should be possible to restart Home
-        # Assistant with absolutely no impact on Neuron automations.
+                try:
+                    async for msg in self.ws:
+                        message = orjson.loads(msg)
+                        LOG.debug("Got message from Home Assistant: %r", message)
+
+                        self.messages.add(message)
+                except websockets.ConnectionClosed as e:
+                    LOG.error("Lost connection with Home Assistant: %s", e)
+                    await self.reconnect()
+
         try:
-            async for msg in self.ws:
-                message = orjson.loads(msg)
-                LOG.debug("Got message from Home Assistant: %r", message)
-
-                self.messages.add(message)
+            await process_messages()
         except asyncio.CancelledError:
             return
 
@@ -130,7 +166,7 @@ class HASS:
                     response = response[0]
                     break
                 else:
-                    await self.messages
+                    await self._new_message_event.wait()
 
         return response
 
@@ -198,12 +234,12 @@ class Messages:
 
     _msg_id: int
     _cache: dict[int, list[dict[str, Any]]]
-    _event: asyncio.Event
+    _new_message_events: list[asyncio.Event]
 
     def __init__(self) -> None:
         self._msg_id = 0
         self._cache = {}
-        self._event = asyncio.Event()
+        self._new_message_events = []
 
     def __getitem__(self, id: int) -> list[dict[str, Any]]:
         return self._cache[id]
@@ -213,10 +249,6 @@ class Messages:
 
     def pop[T](self, id: int, default: T = None) -> list[dict[str, Any]] | T:
         return self._cache.pop(id, default)
-
-    def __await__(self):
-        """Returns when new messages are available"""
-        return self._event.wait().__await__()
 
     def add(self, msg: dict[str, Any]):
         id = cast(int, msg["id"])
@@ -229,5 +261,16 @@ class Messages:
 
     def dingding(self):
         """Notifies waiting coroutines that new messages have arrived"""
-        self._event.set()
-        self._event.clear()
+        for event in self._new_message_events:
+            event.set()
+            event.clear()
+
+    def reset(self):
+        """Resets the instance to its initial state, ready for a new HASS connection"""
+        self._msg_id = 0
+        self._cache.clear()
+
+    def new_message_event(self) -> asyncio.Event:
+        event = asyncio.Event()
+        self._new_message_events.append(event)
+        return event
