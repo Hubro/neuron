@@ -7,6 +7,8 @@ from datetime import timedelta
 from math import floor
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias
 
+from neuron.logging import get_logger
+
 if TYPE_CHECKING:
     from neuron.core import Neuron
 
@@ -21,6 +23,7 @@ __all__ = [
 
 _trigger_handlers: list[tuple[dict, StateChangeHandler]] = []
 _neuron: Neuron | None = None
+LOG = get_logger(__name__)
 
 
 def on_state_change(
@@ -93,10 +96,18 @@ async def action(
     )
     assert not return_response, "return_response not implemented"
 
-    # TODO: Use the automation's logger to log the action call
-    # logger.info("Performing action %s.%s on entity %r", domain, name, entity_id)
-
     target = {"entity_id": entity_id} if entity_id else None
+
+    if target:
+        LOG.info(
+            "Performing action %s.%s on %r",
+            domain,
+            name,
+            entity_id,
+            extra={"component": "api"},
+        )
+    else:
+        LOG.info("Performing action %s.%s", domain, name, extra={"component": "api"})
 
     return await _n().hass.perform_action(domain, name, target=target, data=data)
 

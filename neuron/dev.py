@@ -9,7 +9,7 @@ import sys
 
 import rich.logging
 
-from neuron.logging import get_logger
+from neuron.logging import get_logger, setup_dev_logging
 from neuron.util import debounce
 
 LOG = get_logger("neuron.dev")
@@ -37,19 +37,7 @@ def terminate_handler():
 
 
 async def main():
-    level = logging.DEBUG if os.environ.get("VERBOSE") else logging.INFO
-    level = 5 if os.environ.get("TRACE") else level
-
-    logging._nameToLevel["TRACE"] = 5
-    logging._levelToName[5] = "TRACE"
-
-    logging.basicConfig(
-        level=level,
-        handlers=[rich.logging.RichHandler(rich_tracebacks=True, markup=True)],
-        format=r"[blue b]\[%(name)s][/] %(message)s",
-    )
-    logging.getLogger("websockets.client").setLevel(logging.INFO)
-    logging.getLogger("watchdog").setLevel(logging.INFO)
+    setup_dev_logging()
 
     asyncio.create_task(auto_reload_task(), name="neuron_core_auto_reload")
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import itertools
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -14,10 +14,9 @@ import neuron.api
 from .api import StateChange
 from .config import Config, load_config
 from .hass import HASS
-from .logging import get_logger
+from .logging import NeuronLogger, get_logger
 from .util import (
     filter_keyword_args,
-    has_keyword_arg,
     stringify,
     terse_module_path,
     wait_event,
@@ -154,8 +153,6 @@ class Neuron:
             LOG.warning("Got event message with no subscribers: %r", event_msg)
             return
 
-        handlers = self.subscriptions[id].handlers
-
         is_event = "data" in event_msg["event"]
         is_trigger = "variables" in event_msg["event"]
         handler_kwargs: dict[str, Any] = {}
@@ -178,10 +175,12 @@ class Neuron:
         else:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
 
-        for handler in handlers:
+        for automation, handler in self.subscriptions[id].handlers:
             try:
                 kwargs = filter_keyword_args(handler, handler_kwargs)
-                await handler(**kwargs)
+
+                with automation.override_api_logger():
+                    await handler(**kwargs)
             except Exception:
                 logger = get_logger(handler.__module__)
                 logger.exception(
@@ -474,9 +473,16 @@ class Subscription:
         return list(self._handlers.keys())
 
     @property
-    def handlers(self) -> list[Callable]:
+    def handlers(self) -> list[tuple[Automation, Callable]]:
         """Returns all handlers for this subscription"""
-        return list(itertools.chain(*self._handlers.values()))
+
+        result = []
+
+        for automation, handlers in self._handlers.items():
+            for handler in handlers:
+                result.append((automation, handler))
+
+        return result
 
     def add_handler(self, automation: Automation, handler: Callable):
         handlers = self._handlers.setdefault(automation, [])
@@ -498,6 +504,7 @@ class Automation:
     module: ModuleType
     module_path: Path
     loaded: bool
+    logger: NeuronLogger
     trigger_handlers: list[tuple[dict, Callable]]
 
     def __init__(self, module_path: Path):
@@ -505,6 +512,7 @@ class Automation:
         self.module_name = f"{package_path.name}.automations.{module_path.stem}"
         self.module_path = module_path
         self.loaded = False
+        self.logger = get_logger(self.module_name)
         self.trigger_handlers = []
 
     def __hash__(self) -> int:
@@ -529,3 +537,15 @@ class Automation:
 
         self.name = getattr(self.module, "NAME", self.module_name)
         self.loaded = True
+
+    @contextmanager
+    def override_api_logger(self):
+        """Overrides the API logger for the duration of the context"""
+
+        restore = neuron.api.LOG
+        neuron.api.LOG = self.logger
+
+        try:
+            yield
+        finally:
+            neuron.api.LOG = restore
