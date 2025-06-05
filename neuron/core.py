@@ -116,8 +116,8 @@ class Neuron:
     async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
 
-        new_message = self.hass.messages.new_message_event()
-        reconnected = self.hass.reconnected_event()
+        new_message = self.hass.messages.on_new_message.event()
+        reconnected = self.hass.on_reconnect.event()
 
         try:
             while True:

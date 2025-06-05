@@ -6,8 +6,8 @@ from typing import Any, cast
 import orjson
 import websockets
 
-from neuron.logging import get_logger
-
+from .event_emitter import EventEmitter
+from .logging import get_logger
 from .util import stringify
 
 LOG = get_logger(__name__)
@@ -22,19 +22,19 @@ class HASS:
     websocket_uri: str
     token: str
     messages: Messages
-    _ws: websockets.ClientConnection | None
-    _handler_task_started: bool
-    _reconnected_events: list[asyncio.Event]
-    _new_message_event: asyncio.Event
+    on_reconnect: EventEmitter
+    on_new_message: EventEmitter
 
     def __init__(self, websocket_uri: str, token: str) -> None:
         self.websocket_uri = websocket_uri
         self.token = token
         self.messages = Messages()
-        self._ws = None
+        self.on_reconnect = EventEmitter()
+        self.on_new_message = EventEmitter()
+
+        self._ws: websockets.ClientConnection | None = None
         self._handler_task_started = False
-        self._reconnected_events = []
-        self._new_message_event = self.messages.new_message_event()
+        self._new_message_event = self.messages.on_new_message.event()
 
     @property
     def ws(self) -> websockets.ClientConnection:
@@ -101,14 +101,7 @@ class HASS:
 
         LOG.info("Connection re-established!")
 
-        for event in self._reconnected_events:
-            event.set()
-            event.clear()
-
-    def reconnected_event(self) -> asyncio.Event:
-        event = asyncio.Event()
-        self._reconnected_events.append(event)
-        return event
+        self.on_reconnect.emit()
 
     async def message_handler_task(self):
         """Async task for accepting and distributing messages from HASS"""
@@ -232,14 +225,15 @@ class HASS:
 class Messages:
     """Data strucure for holding and distributing messages from Home Assistant"""
 
+    on_new_message: EventEmitter
     _msg_id: int
     _cache: dict[int, list[dict[str, Any]]]
-    _new_message_events: list[asyncio.Event]
 
     def __init__(self) -> None:
+        self.on_new_message = EventEmitter()
+
         self._msg_id = 0
         self._cache = {}
-        self._new_message_events = []
 
     def __getitem__(self, id: int) -> list[dict[str, Any]]:
         return self._cache[id]
@@ -253,24 +247,14 @@ class Messages:
     def add(self, msg: dict[str, Any]):
         id = cast(int, msg["id"])
         self._cache.setdefault(id, []).append(msg)
-        self.dingding()
+
+        self.on_new_message.emit()
 
     def next_id(self) -> int:
         self._msg_id += 1
         return self._msg_id
 
-    def dingding(self):
-        """Notifies waiting coroutines that new messages have arrived"""
-        for event in self._new_message_events:
-            event.set()
-            event.clear()
-
     def reset(self):
         """Resets the instance to its initial state, ready for a new HASS connection"""
         self._msg_id = 0
         self._cache.clear()
-
-    def new_message_event(self) -> asyncio.Event:
-        event = asyncio.Event()
-        self._new_message_events.append(event)
-        return event
