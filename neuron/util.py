@@ -109,41 +109,40 @@ def log_tasks_and_threads():
 
 
 def debounce(seconds: float):
-    task: asyncio.Task | None = None
+    handle: asyncio.Handle | None = None
 
-    def decorator(fn: Callable[..., Awaitable[None]]):
+    def decorator(fn: Callable):
         @wraps(fn)
         async def wrapped(*args, **kwargs):
-            nonlocal task
+            nonlocal handle
 
-            if task and not task.done():
-                LOG.trace("(debounce) Cancelling task %r", task.get_name())
-                task.cancel()
+            if handle:
+                handle.cancel()
 
-            task = asyncio.create_task(
-                delay(seconds, fn, *args, **kwargs),
-                name=f"debounce-{fn.__name__}",
+            handle = asyncio.get_running_loop().call_later(
+                seconds, lambda: fn(*args, **kwargs)
             )
-            LOG.trace("(debounce) Created task %r", task.get_name())
 
         return wrapped
 
     return decorator
 
 
-async def delay(seconds: float, fn: Callable[..., Awaitable[None]], /, *args, **kwargs):
-    """Use with asyncio.create_task to execute a function after a delay"""
-    try:
-        LOG.trace("(delay) Calling function %r in %r seconds", fn.__name__, seconds)
-        await asyncio.sleep(seconds)
+# TODO: Rewrite this to create and return a task if I ever need it for anything
+#
+# async def delay(seconds: float, fn: Callable[..., Awaitable[None]], /, *args, **kwargs):
+#     """Use with asyncio.create_task to execute a function after a delay"""
+#     try:
+#         LOG.trace("(delay) Calling function %r in %r seconds", fn.__name__, seconds)
+#         await asyncio.sleep(seconds)
 
-        # Run the function in a new task so it won't be cancelled together with
-        # the delay task
-        LOG.trace("(delay) Calling function %r now!", fn.__name__)
-        asyncio.create_task(fn(*args, **kwargs), name=f"delay-{fn.__name__}")  # type: ignore
-    except asyncio.CancelledError:
-        LOG.trace("(delay) Delay for %r cancelled", fn.__name__)
-        pass
+#         # Run the function in a new task so it won't be cancelled together with
+#         # the delay task
+#         LOG.trace("(delay) Calling function %r now!", fn.__name__)
+#         asyncio.create_task(fn(*args, **kwargs), name=f"delay-{fn.__name__}")  # type: ignore
+#     except asyncio.CancelledError:
+#         LOG.trace("(delay) Delay for %r cancelled", fn.__name__)
+#         pass
 
 
 @asynccontextmanager

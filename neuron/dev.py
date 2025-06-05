@@ -111,7 +111,7 @@ async def main():
 
 
 @debounce(seconds=0.25)
-async def signal_neuron_reload():
+def signal_neuron_reload():
     """Signals the main loop to reload Neuron"""
     _reload_event.set()
 
