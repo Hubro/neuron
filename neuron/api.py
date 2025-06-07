@@ -228,6 +228,17 @@ class Entity:
     def is_off(self) -> bool:
         return self.state == "off"
 
+    def on_change(
+        self,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        duration: timedelta | int | str | None = None,
+    ):
+        """Shortcut for on_state_change for this entity"""
+        return on_state_change(
+            self, from_state=from_state, to_state=to_state, duration=duration
+        )
+
     async def lock(self):
         """Shortcut for locking a lock entity"""
         assert self.domain == "lock"
