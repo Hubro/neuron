@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator, cast, overload
 
 import neuron.api
 
-from .api import StateChange
+from .api import Entity, StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .logging import NeuronLogger, get_logger
@@ -155,6 +155,7 @@ class Neuron:
 
         is_event = "data" in event_msg["event"]
         is_trigger = "variables" in event_msg["event"]
+        is_entities = "a" in event_msg["event"] or "c" in event_msg["event"]
         handler_kwargs: dict[str, Any] = {}
 
         if is_event:
@@ -171,6 +172,12 @@ class Neuron:
                     pass
                 case _:
                     handler_kwargs["trigger"] = trigger
+
+        elif is_entities:
+            a = event_msg["event"].get("a")
+            c = event_msg["event"].get("c")
+
+            handler_kwargs["entity_states"] = a or c
 
         else:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
@@ -266,6 +273,16 @@ class Neuron:
 
         await self.establish_subscriptions(automation)
 
+        # Wait for entities to saturate before calling init
+        for entity in automation.entities.values():
+            await entity.initialized.wait()
+
+        if hasattr(automation.module, "init"):
+            result = automation.module.init()
+
+            if asyncio.iscoroutine(result):
+                await result
+
     async def establish_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:
             LOG.error(
@@ -277,22 +294,36 @@ class Neuron:
         for trigger, handler in automation.trigger_handlers:
             await self.subscribe(automation, handler, to=trigger)
 
+        if automation.entities:
+            await self.subscribe(
+                automation,
+                automation.subscribe_entities_handler,
+                to=list(automation.entities.values()),
+            )
+
     async def subscribe(
         self,
         automation: Automation,
         handler: Callable,
         *,
-        to: str | dict[str, Any],
+        to: str | dict[str, Any] | list[Entity],
     ):
         if isinstance(to, str):
             raise NotImplementedError()
 
-        trigger = to
-        subscription = self.subscriptions.get(trigger)
+        subscription = self.subscriptions.get(to)
 
         if not subscription:
-            id = await self.hass.subscribe_to_trigger(trigger)
-            subscription = Subscription(id, trigger=trigger)
+            if isinstance(to, str):
+                raise NotImplementedError()
+            elif isinstance(to, dict):
+                trigger = to
+                id = await self.hass.subscribe_to_trigger(trigger)
+                subscription = Subscription(id, trigger=trigger)
+            else:
+                entities = to
+                id = await self.hass.subscribe_to_entities(entities)
+                subscription = Subscription(id, entities=entities)
 
         subscription.add_handler(automation, handler)
         self.subscriptions.add(subscription)
@@ -334,9 +365,10 @@ class Subscriptions:
         # Maps HASS subscription ID to Subscription
         self._subscriptions: dict[int, Subscription] = {}
 
-        # Maps event/trigger to subscription. Since triggers are JSON encoded
-        # objects, there is no key overlap with event names.
-        self._event_trigger_map: dict[str, Subscription] = {}
+        # Maps event/trigger/entities to subscription. Since events are
+        # strings, triggers are objects and entity lists are lists, there is no
+        # overlap between subscription types.
+        self._reverse_map: dict[str, Subscription] = {}
 
         self._automation_map: dict[Automation, set[Subscription]] = {}
 
@@ -347,7 +379,9 @@ class Subscriptions:
             yield subscription
 
     @overload
-    def __getitem__(self, key: int | str | dict[str, Any]) -> Subscription:
+    def __getitem__(
+        self, key: int | str | dict[str, Any] | list[Entity]
+    ) -> Subscription:
         """Returns a subscription by its ID or event/trigger"""
         ...
 
@@ -357,20 +391,22 @@ class Subscriptions:
         ...
 
     def __getitem__(
-        self, key: int | str | dict[str, Any] | Automation
+        self, key: int | str | dict[str, Any] | Automation | list[Entity]
     ) -> Subscription | set[Subscription]:
         if isinstance(key, int):
             return self._subscriptions[key]
         elif isinstance(key, str):
-            return self._event_trigger_map[key]
+            return self._reverse_map[key]
         elif isinstance(key, dict):
-            return self._event_trigger_map[stringify(key)]
+            return self._reverse_map[stringify(key)]
+        elif isinstance(key, list):
+            return self._reverse_map[stringify([x.entity_id for x in key])]
         else:
             return self._automation_map[key].copy()
 
     @overload
     def get[T](
-        self, key: int | str | dict[str, Any], default: T = None
+        self, key: int | str | dict[str, Any] | list[Entity], default: T = None
     ) -> Subscription | T:
         """Returns a subscription by its ID or event/trigger"""
         ...
@@ -381,20 +417,26 @@ class Subscriptions:
         ...
 
     def get[T](
-        self, key: int | str | dict[str, Any] | Automation, default: T = None
+        self,
+        key: int | str | dict[str, Any] | list[Entity] | Automation,
+        default: T = None,
     ) -> Subscription | set[Subscription] | T:
         try:
             return self[key]
         except KeyError:
             return default
 
-    def __contains__(self, key: int | str | Automation) -> bool:
+    def __contains__(
+        self, key: int | str | list[Entity] | dict[str, Any] | Automation
+    ) -> bool:
         if isinstance(key, int):
             return key in self._subscriptions
         elif isinstance(key, str):
-            return key in self._event_trigger_map
+            return key in self._reverse_map
         elif isinstance(key, dict):
-            return stringify(key) in self._event_trigger_map
+            return stringify(key) in self._reverse_map
+        elif isinstance(key, list):
+            return stringify([x.entity_id for x in key]) in self._reverse_map
         else:
             return key in self._automation_map
 
@@ -414,11 +456,11 @@ class Subscriptions:
                 subscription = self._subscriptions[subscription]
 
             del self._subscriptions[subscription.id]
-            del self._event_trigger_map[subscription.key]
+            del self._reverse_map[subscription.key]
 
     def add(self, subscription: Subscription):
         self._subscriptions[subscription.id] = subscription
-        self._event_trigger_map[subscription.key] = subscription
+        self._reverse_map[subscription.key] = subscription
 
         for automation in subscription.automations:
             self._automation_map.setdefault(automation, set()).add(subscription)
@@ -431,15 +473,16 @@ class Subscription:
     id: int  # Subscription ID from HASS
     event: str | None = None  # Provide if event subscription
     trigger: dict | None = None  # Provide if trigger subscription
+    entities: list[Entity] | None = None  # Provide if entities subscription
 
     _handlers: dict[Automation, list[Callable]] = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.event and self.trigger:
-            raise ValueError("Must set 'event' or 'trigger', not both")
-
-        if not self.event and not self.trigger:
-            raise ValueError("Must set either 'event' or 'trigger'")
+        if (
+            len([x for x in [self.event, self.trigger, self.entities] if x is not None])
+            != 1
+        ):
+            raise ValueError("Must set either 'event', 'trigger' or 'entities'")
 
     def __hash__(self) -> int:
         return hash(self.id)
@@ -465,7 +508,14 @@ class Subscription:
 
     @property
     def key(self) -> str:
-        return cast(str, self.event or stringify(self.trigger))
+        if self.event:
+            return self.event
+        elif self.trigger:
+            return stringify(self.trigger)
+        elif self.entities:
+            return stringify([x.entity_id for x in self.entities])
+        else:
+            raise RuntimeError()
 
     @property
     def automations(self) -> list[Automation]:
@@ -506,6 +556,7 @@ class Automation:
     loaded: bool
     logger: NeuronLogger
     trigger_handlers: list[tuple[dict, Callable]]
+    entities: dict[str, Entity]
 
     def __init__(self, module_path: Path):
         package_path = module_path.parent.parent
@@ -514,6 +565,10 @@ class Automation:
         self.loaded = False
         self.logger = get_logger(self.module_name)
         self.trigger_handlers = []
+        self.entities = {}
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} {self.module_name!r}>"
 
     def __hash__(self) -> int:
         return hash(self.module_name)
@@ -533,7 +588,9 @@ class Automation:
         assert self.module_path.is_file()
 
         self.trigger_handlers = neuron.api._trigger_handlers.copy()
+        self.entities = neuron.api._entities.copy()
         neuron.api._trigger_handlers.clear()
+        neuron.api._entities.clear()
 
         self.name = getattr(self.module, "NAME", self.module_name)
         self.loaded = True
@@ -549,3 +606,25 @@ class Automation:
             yield
         finally:
             neuron.api.LOG = restore
+
+    async def subscribe_entities_handler(self, entity_states: dict[str, Any]):
+        for entity_id, state_object in entity_states.items():
+            if entity_id not in self.entities:
+                LOG.error(f"Got unexpected entity state update for {entity_id!r}")
+                continue
+
+            entity = self.entities[entity_id]
+
+            if "+" in state_object:
+                diff = state_object["+"]
+                entity._state = diff["s"]
+
+                if "a" in diff:
+                    entity._attributes.update(diff["a"])
+
+                LOG.debug("Updated entity state: %r", entity)
+            else:
+                entity._state = state_object["s"]
+                entity._attributes = state_object["a"]
+                entity.initialized.set()
+                LOG.debug("Set initial entity state: %r", entity)

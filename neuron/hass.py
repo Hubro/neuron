@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import orjson
 import websockets
@@ -9,6 +9,9 @@ import websockets
 from .event_emitter import EventEmitter
 from .logging import get_logger
 from .util import stringify
+
+if TYPE_CHECKING:
+    from .api import Entity
 
 LOG = get_logger(__name__)
 
@@ -112,10 +115,15 @@ class HASS:
 
                 try:
                     async for msg in self.ws:
-                        message = orjson.loads(msg)
-                        LOG.debug("Got message from Home Assistant: %r", message)
+                        messages = orjson.loads(msg)
 
-                        self.messages.add(message)
+                        if not isinstance(messages, list):
+                            messages = [messages]
+
+                        for message in messages:
+                            LOG.debug("Got message from Home Assistant: %r", message)
+                            self.messages.add(message)
+
                 except websockets.ConnectionClosed as e:
                     LOG.error("Lost connection with Home Assistant: %s", e)
                     await self.reconnect()
@@ -154,12 +162,12 @@ class HASS:
             # If the message handler is running, wait for the response to show
             # up in the message cache
             while True:
-                if response := self.messages.pop(id, None):
-                    assert len(response) == 1
-                    response = response[0]
+                response = self.messages.pop_message(id)
+
+                if response:
                     break
-                else:
-                    await self._new_message_event.wait()
+
+                await self._new_message_event.wait()
 
         return response
 
@@ -215,6 +223,29 @@ class HASS:
         LOG.debug("Subscribed to trigger (id=%d): %s", id, key)
         return id
 
+    async def subscribe_to_entities(self, entities: list[Entity]) -> int:
+        """Subscribes to one or more entities"""
+        assert entities
+
+        entity_ids = [entity.entity_id for entity in entities]
+        response = await self.message(
+            {
+                "type": "subscribe_entities",
+                "entity_ids": entity_ids,
+            }
+        )
+        id = response["id"]
+
+        if not response["success"]:
+            LOG.error(
+                "Failed to subscribe to entities %r: %s",
+                entity_ids,
+                response["error"]["message"],
+            )
+
+        LOG.debug("Subscribed to entities (id=%d): %s", id, entity_ids)
+        return id
+
     async def unsubscribe(self, subscription_id: int):
         response = await self.message(
             {"type": "unsubscribe_events", "subscription": subscription_id}
@@ -243,6 +274,19 @@ class Messages:
 
     def pop[T](self, id: int, default: T = None) -> list[dict[str, Any]] | T:
         return self._cache.pop(id, default)
+
+    def pop_message(self, id: int) -> dict[str, Any] | None:
+        """Pops the oldest message with the given ID"""
+
+        if id in self._cache:
+            item = self._cache[id].pop(0)
+
+            if not self._cache[id]:
+                del self._cache[id]
+
+            return item
+        else:
+            return None
 
     def add(self, msg: dict[str, Any]):
         id = cast(int, msg["id"])
