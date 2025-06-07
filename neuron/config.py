@@ -5,8 +5,10 @@ import logging
 import os
 from dataclasses import dataclass
 from functools import cache
+from pathlib import Path
 
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
+DATA_DIR = os.environ.get("NEURON_DATA_DIR", "/data")
 HASS_WEBSOCKET_URI = os.environ.get(
     "HASS_WEBSOCKET_URI", "ws://supervisor/core/websocket"
 )
@@ -21,14 +23,9 @@ LOG = logging.getLogger(__name__)
 @dataclass
 class Config:
     packages: list[str]
-
-    @property
-    def hass_websocket_uri(self):
-        return HASS_WEBSOCKET_URI
-
-    @property
-    def hass_api_token(self):
-        return HASS_API_TOKEN
+    data_dir: Path
+    hass_websocket_uri: str
+    hass_api_token: str
 
 
 @cache
@@ -39,4 +36,7 @@ def load_config():
 
     return Config(
         packages=raw_config["packages"],
+        data_dir=Path(DATA_DIR),
+        hass_websocket_uri=HASS_WEBSOCKET_URI,
+        hass_api_token=HASS_API_TOKEN,
     )
