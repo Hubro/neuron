@@ -19,6 +19,7 @@ __all__ = [
     "action",
     "turn_on",
     "turn_off",
+    "Entity",
     "StateChange",
 ]
 
@@ -29,44 +30,6 @@ LOG = get_logger(__name__)
 
 
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
-
-
-class Entity:
-    entity_id: str
-    initialized: asyncio.Event
-    _state: str | None
-    _attributes: dict[str, str]
-
-    def __init__(self, entity_id: str):
-        self.entity_id = entity_id
-        self._state = None
-        self.initialized = asyncio.Event()
-
-        _entities[entity_id] = self
-
-    def __repr__(self) -> str:
-        return f"<{type(self).__name__} {self.entity_id} state={self._state!r}>"
-
-    def __getattr__(self, name: str, /) -> Any:
-        """Allows nicer attribute lookup"""
-
-        if attr := self._attributes.get(name, None):
-            return attr
-
-        raise AttributeError(name=name)
-
-    def __hash__(self) -> int:
-        return hash(self.entity_id)
-
-    @property
-    def state(self) -> str:
-        # NB: I'm not sure if this can happen, but if it does, I have to make
-        # sure all entity states have been set before starting other
-        # subscriptions
-        if self._state is None:
-            raise RuntimeError(f"State for {self.entity_id!r} is not yet initialized")
-
-        return self._state
 
 
 def on_state_change(
@@ -175,6 +138,44 @@ def _reset():
     global _neuron, _trigger_handlers
     _neuron = None
     _trigger_handlers = []
+
+
+class Entity:
+    entity_id: str
+    initialized: asyncio.Event
+    _state: str | None
+    _attributes: dict[str, str]
+
+    def __init__(self, entity_id: str):
+        self.entity_id = entity_id
+        self._state = None
+        self.initialized = asyncio.Event()
+
+        _entities[entity_id] = self
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} {self.entity_id} state={self._state!r}>"
+
+    def __getattr__(self, name: str, /) -> Any:
+        """Allows nicer attribute lookup"""
+
+        if attr := self._attributes.get(name, None):
+            return attr
+
+        raise AttributeError(name=name)
+
+    def __hash__(self) -> int:
+        return hash(self.entity_id)
+
+    @property
+    def state(self) -> str:
+        # NB: I'm not sure if this can happen, but if it does, I have to make
+        # sure all entity states have been set before starting other
+        # subscriptions
+        if self._state is None:
+            raise RuntimeError(f"State for {self.entity_id!r} is not yet initialized")
+
+        return self._state
 
 
 @dataclass
