@@ -87,30 +87,35 @@ class Neuron:
         finally:
             LOG.info("Shutting down gracefully")
 
-            LOG.info("Ejecting all automation modules")
-            for automation in list(self.automations.values()):
-                await self.eject_automation(automation)
-
-            LOG.info("Unsubscribing from events")
-            await self.prune_subscriptions()
-
-            LOG.info("Shutting down background tasks")
-            for task in self.tasks:
-                task.cancel()
-
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
-            LOG.info("Closing Home Assistant Websocket connection")
-            await self.hass.disconnect()
-
-            LOG.info("Bye!")
+            try:
+                await asyncio.wait_for(self._shutdown(), timeout=2)
+                LOG.info("Bye!")
+            except asyncio.TimeoutError:
+                LOG.error("Failed to shut down gracefully, timeout reached")
 
     def stop(self):
         """Signals Neuron to shut down gracefully"""
         self._stop.set()
+
+    async def _shutdown(self):
+        LOG.info("Ejecting all automation modules")
+        for automation in list(self.automations.values()):
+            await self.eject_automation(automation)
+
+        LOG.info("Unsubscribing from events")
+        await self.prune_subscriptions()
+
+        LOG.info("Shutting down background tasks")
+        for task in self.tasks:
+            task.cancel()
+
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        LOG.info("Closing Home Assistant Websocket connection")
+        await self.hass.disconnect()
 
     async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
