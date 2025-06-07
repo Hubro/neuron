@@ -29,16 +29,15 @@ _neuron: Neuron | None = None
 LOG = get_logger(__name__)
 
 
-AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
-
-
 def on_state_change(
-    entity_id: str | list[str],
+    entity: EntityTarget,
     from_state: str | None = None,
     to_state: str | None = None,
     duration: timedelta | int | str | None = None,
 ):
     """Decorator for registering a state change handler"""
+
+    entity_id = _entity_id(entity)
 
     trigger = {
         "trigger": "state",
@@ -89,7 +88,7 @@ async def action(
     domain: str,
     name: str,
     /,
-    entity_id: str | list[str] | None = None,
+    entity: EntityTarget | None = None,
     *,
     area_id: str | None = None,
     device_id: str | None = None,
@@ -102,7 +101,7 @@ async def action(
     )
     assert not return_response, "return_response not implemented"
 
-    target = {"entity_id": entity_id} if entity_id else None
+    target = {"entity_id": _entity_id(entity)} if entity else None
 
     if target:
         LOG.info(
@@ -118,12 +117,21 @@ async def action(
     return await _n().hass.perform_action(domain, name, target=target, data=data)
 
 
-async def turn_on(entity_id: str, **kwargs):
-    await action("homeassistant", "turn_on", entity_id, data=kwargs)
+async def turn_on(entity: EntityTarget, **kwargs):
+    await action("homeassistant", "turn_on", entity, data=kwargs)
 
 
-async def turn_off(entity_id: str, **kwargs):
-    await action("homeassistant", "turn_off", entity_id, data=kwargs)
+async def turn_off(entity: EntityTarget, **kwargs):
+    await action("homeassistant", "turn_off", entity, data=kwargs)
+
+
+def _entity_id(entity: EntityTarget) -> str | list[str]:
+    if isinstance(entity, Entity):
+        entity = str(entity)
+    elif isinstance(entity, list):
+        entity = [str(x) for x in entity]
+
+    return entity  # type: ignore
 
 
 def _n() -> Neuron:
@@ -155,6 +163,9 @@ class Entity:
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.entity_id} state={self._state!r}>"
+
+    def __str__(self) -> str:
+        return self.entity_id
 
     def __getattr__(self, name: str, /) -> Any:
         """Allows nicer attribute lookup"""
@@ -289,3 +300,7 @@ class StateChange:
         #         },
         #     },
         # }
+
+
+AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
+EntityTarget: TypeAlias = str | Entity | list[str | Entity]
