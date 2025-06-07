@@ -19,12 +19,6 @@ _exit_event = asyncio.Event()
 _terminate = False
 
 
-def sigusr1_handler():
-    from neuron.util import log_tasks_and_threads
-
-    log_tasks_and_threads()
-
-
 def terminate_handler():
     global _terminate
 
@@ -42,9 +36,23 @@ async def main():
     asyncio.create_task(auto_reload_task(), name="neuron_core_auto_reload")
 
     loop = asyncio.get_running_loop()
+
+    def sigusr1_handler():
+        from neuron.util import log_tasks_and_threads
+
+        log_tasks_and_threads()
+
     signal.signal(
         signal.SIGUSR1,
         lambda *args: loop.call_soon_threadsafe(sigusr1_handler),
+    )
+
+    def sigusr2_handler():
+        neuron._log_state()
+
+    signal.signal(
+        signal.SIGUSR2,
+        lambda *args: loop.call_soon_threadsafe(sigusr2_handler),
     )
 
     signal.signal(

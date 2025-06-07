@@ -362,6 +362,28 @@ class Neuron:
                 await self.hass.unsubscribe(subscription.id)
                 del self.subscriptions[subscription]
 
+    def _log_state(self):
+        """Logs the entire application state for debugging"""
+        dump = []
+
+        dump.append(f"neuron.config = {self.config!r}")
+
+        dump.append("neuron.automations =")
+        for automation in self.automations.values():
+            dump.append(f"  - {automation!r}")
+
+        dump.append(f"neuron.packages = {self.packages!r}")
+
+        dump.append("neuron.tasks =")
+        for task in self.tasks:
+            dump.append(f"  - {task.get_name()}")
+
+        dump.append("neuron.subscriptions =")
+        for subscription in self.subscriptions:
+            dump.append(f"  {subscription.id}: {subscription!r}")
+
+        LOG.debug("Neuron state:\n%s", "\n".join(dump))
+
 
 class Subscriptions:
     """Data structure for managing subscriptions"""
