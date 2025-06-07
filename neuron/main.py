@@ -14,8 +14,9 @@ async def run_neuron():
     pythonpath_workaround()
 
     logging.basicConfig(
-        level=logging.INFO,
+        level="TRACE",
         stream=sys.stdout,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
     neuron = Neuron()
 
