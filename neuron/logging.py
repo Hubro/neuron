@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Mapping, cast
 
+import orjson
 import rich.logging
 
 logging._nameToLevel["TRACE"] = 5
@@ -16,12 +17,27 @@ def setup_dev_logging():
     level = logging.DEBUG if os.environ.get("VERBOSE") else logging.INFO
     level = 5 if os.environ.get("TRACE") else level
 
+    handler = PrettyHandler(rich_tracebacks=True, markup=True)
+    handler.setLevel(level)
+
     logging.basicConfig(
-        level=level,
-        handlers=[PrettyHandler(rich_tracebacks=True, markup=True)],
+        level="TRACE",
+        handlers=[handler],
     )
     logging.getLogger("websockets.client").setLevel(logging.INFO)
     logging.getLogger("watchdog").setLevel(logging.INFO)
+
+    setup_file_logging()
+
+
+def setup_file_logging():
+    """Sets up JSON logging to a local file"""
+
+    from .config import load_config
+
+    handler = logging.FileHandler(load_config().data_dir / "neuron.log")
+    handler.setFormatter(JSONFormatter())
+    get_logger().addHandler(handler)
 
 
 def get_logger(name: str | None = None) -> NeuronLogger:
@@ -52,6 +68,11 @@ class NeuronLogger(logging.Logger):
             stacklevel=stacklevel,
             extra=extra,
         )
+
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return orjson.dumps(record.__dict__, default=lambda x: "?").decode()
 
 
 class PrettyHandler(rich.logging.RichHandler):
