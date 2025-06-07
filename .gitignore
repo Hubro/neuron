@@ -1,6 +1,7 @@
 
 # Caches, build output etc.
 __pycache__/
+*.log
 
 # My own stuff
 /justfile
