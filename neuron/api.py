@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 from math import floor
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias, overload
 
 from neuron.logging import NeuronLogger, get_logger
 
@@ -103,7 +103,8 @@ async def action(
     )
     assert not return_response, "return_response not implemented"
 
-    target = {"entity_id": _entity_id(entity)} if entity else None
+    entity_id = _entity_id(entity)
+    target = {"entity_id": entity_id} if entity_id else None
 
     if target:
         LOG.info(
@@ -127,8 +128,18 @@ async def turn_off(entity: EntityTarget, **kwargs):
     await action("homeassistant", "turn_off", entity, data=kwargs)
 
 
-def _entity_id(entity: EntityTarget) -> str | list[str]:
-    if isinstance(entity, Entity):
+@overload
+def _entity_id(entity: EntityTarget) -> str | list[str]: ...
+
+
+@overload
+def _entity_id(entity: EntityTarget | None) -> str | list[str] | None: ...
+
+
+def _entity_id(entity: EntityTarget | None) -> str | list[str] | None:
+    if entity is None:
+        return None
+    elif isinstance(entity, Entity):
         entity = str(entity)
     elif isinstance(entity, list):
         entity = [str(x) for x in entity]
@@ -151,12 +162,15 @@ def _reset():
 
 
 class Entity:
+    domain: str
+    name: str
     entity_id: str
     initialized: asyncio.Event
     _state: str | None
     _attributes: dict[str, str]
 
     def __init__(self, entity_id: str):
+        self.domain, self.name = entity_id.split(".")
         self.entity_id = entity_id
         self._state = None
         self.initialized = asyncio.Event()
@@ -180,6 +194,14 @@ class Entity:
     def __hash__(self) -> int:
         return hash(self.entity_id)
 
+    def __bool__(self) -> bool:
+        """Allows practical usage in conditionals for boolean entities"""
+
+        if self.domain in ["binary_sensor", "switch"]:
+            return self.is_on
+
+        raise ValueError("Ambiguous truthiness for entity of domain %r", self.domain)
+
     @property
     def state(self) -> str:
         # NB: I'm not sure if this can happen, but if it does, I have to make
@@ -189,6 +211,32 @@ class Entity:
             raise RuntimeError(f"State for {self.entity_id!r} is not yet initialized")
 
         return self._state
+
+    @property
+    def is_locked(self) -> bool:
+        return self.state == "locked"
+
+    @property
+    def is_unlocked(self) -> bool:
+        return self.state == "unlocked"
+
+    @property
+    def is_on(self) -> bool:
+        return self.state == "on"
+
+    @property
+    def is_off(self) -> bool:
+        return self.state == "off"
+
+    async def lock(self):
+        """Shortcut for locking a lock entity"""
+        assert self.domain == "lock"
+        await action("lock", "lock", self)
+
+    async def unlock(self):
+        """Shortcut for unlocking a lock entity"""
+        assert self.domain == "lock"
+        await action("lock", "unlock", self)
 
 
 @dataclass
