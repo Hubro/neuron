@@ -22,10 +22,13 @@ __all__ = [
     "StateChange",
 ]
 
-_trigger_handlers: list[tuple[dict, StateChangeHandler]] = []
+_trigger_handlers: list[tuple[dict, AsyncFunction]] = []
 _entities: dict[str, Entity] = {}
 _neuron: Neuron | None = None
 LOG = get_logger(__name__)
+
+
+AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
 
 
 class Entity:
@@ -102,7 +105,7 @@ def on_state_change(
 
         trigger["for"] = duration
 
-    def decorator(handler: StateChangeHandler):
+    def decorator(handler: AsyncFunction):
         _trigger_handlers.append((trigger, handler))
         return handler
 
@@ -285,8 +288,3 @@ class StateChange:
         #         },
         #     },
         # }
-
-
-StateChangeHandler: TypeAlias = (
-    Callable[[StateChange], Awaitable[None]] | Callable[[], Awaitable[None]]
-)

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, cast, overload
+from typing import Any, Callable, Iterator, overload
 
 import neuron.api
 
@@ -188,6 +188,8 @@ class Neuron:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
 
         for automation, handler in self.subscriptions[id].handlers:
+            handler_kwargs["log"] = automation.logger
+
             try:
                 kwargs = filter_keyword_args(handler, handler_kwargs)
 
@@ -283,7 +285,10 @@ class Neuron:
             await entity.initialized.wait()
 
         if hasattr(automation.module, "init"):
-            result = automation.module.init()
+            kwargs = filter_keyword_args(
+                automation.module.init, {"log": automation.logger}
+            )
+            result = automation.module.init(**kwargs)
 
             if asyncio.iscoroutine(result):
                 await result
