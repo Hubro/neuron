@@ -8,7 +8,7 @@ from datetime import timedelta
 from math import floor
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias
 
-from neuron.logging import get_logger
+from neuron.logging import NeuronLogger, get_logger
 
 if TYPE_CHECKING:
     from neuron.core import Neuron
@@ -19,8 +19,10 @@ __all__ = [
     "action",
     "turn_on",
     "turn_off",
+    "get_logger",
     "Entity",
     "StateChange",
+    "NeuronLogger",
 ]
 
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
