@@ -164,7 +164,8 @@ class Neuron:
         handler_kwargs: dict[str, Any] = {}
 
         if is_event:
-            raise NotImplementedError()
+            handler_kwargs["event_type"] = event_msg["event"]["event_type"]
+            handler_kwargs["event"] = event_msg["event"]["data"]
 
         elif is_trigger:
             trigger = event_msg["event"]["variables"]["trigger"]
@@ -304,6 +305,9 @@ class Neuron:
         for trigger, handler in automation.trigger_handlers:
             await self.subscribe(automation, handler, to=trigger)
 
+        for event, handler in automation.event_handlers:
+            await self.subscribe(automation, handler, to=event)
+
         if automation.entities:
             await self.subscribe(
                 automation,
@@ -318,14 +322,13 @@ class Neuron:
         *,
         to: str | dict[str, Any] | list[Entity],
     ):
-        if isinstance(to, str):
-            raise NotImplementedError()
-
         subscription = self.subscriptions.get(to)
 
         if not subscription:
             if isinstance(to, str):
-                raise NotImplementedError()
+                event = to
+                id = await self.hass.subscribe_to_events(event)
+                subscription = Subscription(id, event=event)
             elif isinstance(to, dict):
                 trigger = to
                 id = await self.hass.subscribe_to_trigger(trigger)
@@ -588,6 +591,7 @@ class Automation:
     loaded: bool
     logger: NeuronLogger
     trigger_handlers: list[tuple[dict, Callable]]
+    event_handlers: list[tuple[str, Callable]]
     entities: dict[str, Entity]
 
     def __init__(self, module_path: Path):
@@ -597,6 +601,7 @@ class Automation:
         self.loaded = False
         self.logger = get_logger(self.module_name)
         self.trigger_handlers = []
+        self.event_handlers = []
         self.entities = {}
 
     def __repr__(self) -> str:
@@ -620,9 +625,9 @@ class Automation:
         assert self.module_path.is_file()
 
         self.trigger_handlers = neuron.api._trigger_handlers.copy()
+        self.event_handlers = neuron.api._event_handlers.copy()
         self.entities = neuron.api._entities.copy()
-        neuron.api._trigger_handlers.clear()
-        neuron.api._entities.clear()
+        neuron.api._clear()
 
         self.name = getattr(self.module, "NAME", self.module_name)
         self.loaded = True

@@ -197,8 +197,24 @@ class HASS:
             LOG.error("Failed to perform action: %s", response["error"]["message"])
             return
 
-    async def subscribe_to_event(self, event: str | None = None) -> int:
-        raise NotImplementedError()
+    async def subscribe_to_events(self, event: str = "*") -> int:
+        message = {"type": "subscribe_events"}
+
+        if event != "*":
+            message["event_type"] = event
+
+        response = await self.message(message)
+        id = response["id"]
+
+        if not response["success"]:
+            LOG.error(
+                "Failed to subscribe to event %r: %s",
+                event,
+                response["error"]["message"],
+            )
+
+        LOG.debug("Subscribed to event (id=%d): %s", id, event)
+        return id
 
     async def subscribe_to_trigger(self, trigger: dict[str, Any]) -> int:
         """Subscribes to a trigger and returns the Subscription"""

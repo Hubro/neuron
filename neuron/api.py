@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import wraps
 from math import floor
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias, overload
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "on_state_change",
+    "on_event",
     "daily",
     "action",
     "turn_on",
@@ -26,6 +28,7 @@ __all__ = [
 ]
 
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
+_event_handlers: list[tuple[str, AsyncFunction]] = []
 _entities: dict[str, Entity] = {}
 _neuron: Neuron | None = None
 LOG = get_logger(__name__)
@@ -72,6 +75,45 @@ def on_state_change(
     def decorator(handler: AsyncFunction):
         _trigger_handlers.append((trigger, handler))
         return handler
+
+    return decorator
+
+
+def on_event(event: str = "*", **filter: Any):
+    """Decorator for subscribing to an event, or all events
+
+    Usage examples:
+
+        @on_event()
+        async def on_any_event(event_type: str, event: dict, log: NeuronLogger):
+            log.info(f"Received event: {event_type=!r} {event=!r}")
+
+        @on_event("zha_event", device_id="0123456789abcdef", command="on")
+        async def bedroom_remote_on():
+            await bedroom_lights.turn_on()
+
+        @on_event("zha_event", device_id="0123456789abcdef", command="off")
+        async def bedroom_remote_off():
+            await bedroom_lights.turn_off()
+    """
+
+    def decorator(handler: AsyncFunction):
+        @wraps(handler)
+        async def wrapper(*args, **kwargs):
+            event = kwargs["event"]
+
+            for key, expected_value in filter.items():
+                event_value = event.get(key, None)
+
+                if not event_value:
+                    return
+
+                if event_value != expected_value:
+                    return
+
+            await handler(*args, **kwargs)
+
+        _event_handlers.append((event, wrapper))
 
     return decorator
 
@@ -156,9 +198,17 @@ def _n() -> Neuron:
 
 def _reset():
     """Returns the API module to a clean initial state"""
-    global _neuron, _trigger_handlers
+    _clear()
+
+    global _neuron
     _neuron = None
+
+
+def _clear():
+    """Clears registered handlers"""
+    global _trigger_handlers, _event_handlers
     _trigger_handlers = []
+    _event_handlers = []
 
 
 class Entity:
