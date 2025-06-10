@@ -1,10 +1,11 @@
 import asyncio
+import inspect
 import sys
 import threading
 from contextlib import asynccontextmanager
 from functools import wraps
 from types import FrameType
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 
 import orjson
 
@@ -19,7 +20,10 @@ def stringify(obj: Any) -> str:
 
 
 def has_keyword_arg(fn: Callable, name: str):
-    return name in fn.__code__.co_varnames
+    fn = inspect.unwrap(fn)
+    spec = inspect.getfullargspec(fn)
+
+    return name in spec.args or name in spec.kwonlyargs
 
 
 def filter_keyword_args(fn: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
