@@ -128,6 +128,10 @@ class HASS:
                     LOG.error("Lost connection with Home Assistant: %s", e)
                     await self.reconnect()
 
+                else:
+                    LOG.error("Home Assistant closed the connection")
+                    await self.reconnect()
+
         try:
             await process_messages()
         except asyncio.CancelledError:
