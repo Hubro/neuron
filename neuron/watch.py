@@ -70,26 +70,29 @@ class SourceChangeHandler(watchdog.events.FileSystemEventHandler):
         self.notify = notify
 
     def on_any_event(self, event: watchdog.events.FileSystemEvent) -> None:
-        if event.is_directory:
-            return
+        try:
+            if event.is_directory:
+                return
 
-        # event.event_type is one of:
-        # moved deleted created modified closed closed_no_write opened
-        if event.event_type not in ("moved", "deleted", "created", "modified"):
-            return
+            # event.event_type is one of:
+            # moved deleted created modified closed closed_no_write opened
+            if event.event_type not in ("moved", "deleted", "created", "modified"):
+                return
 
-        src = cast(str, event.src_path)
-        dst = cast(str, event.dest_path)
+            src = cast(str, event.src_path)
+            dst = cast(str, event.dest_path)
 
-        touched = set()
+            touched = set()
 
-        for path in [src, dst]:
-            if not path.endswith(".py") or path.endswith("__init__.py"):
-                continue
+            for path in [src, dst]:
+                if not path.endswith(".py") or path.endswith("__init__.py"):
+                    continue
 
-            if path in touched:
-                continue
+                if path in touched:
+                    continue
 
-            touched.add(path)
+                touched.add(path)
 
-        self.loop.call_soon_threadsafe(self.notify, touched)
+            self.loop.call_soon_threadsafe(self.notify, touched)
+        except Exception:
+            LOG.exception("Unhandled exception during processing of event!")
