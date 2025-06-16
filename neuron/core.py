@@ -259,7 +259,7 @@ class Neuron:
                 # Module was modified
                 LOG.info("Reloading modified automation: %s", automation.module_name)
                 await self.eject_automation(automation)
-                await self.load_automation(module_path)
+                await self.load_automation(module_path, reload=True)
             else:
                 # Module was added
                 LOG.info(
@@ -268,7 +268,7 @@ class Neuron:
                 )
                 await self.load_automation(module_path)
 
-    async def load_automation(self, module_path: Path):
+    async def load_automation(self, module_path: Path, reload=False):
         """Loads an automation from a module path"""
 
         automation = Automation(module_path)
@@ -277,7 +277,7 @@ class Neuron:
         assert automation.module_name not in self.automations
         self.automations[automation.module_name] = automation
 
-        automation.load()
+        automation.load(reload=reload)
 
         await self.establish_subscriptions(automation)
 
@@ -610,7 +610,7 @@ class Automation:
     def __hash__(self) -> int:
         return hash(self.module_name)
 
-    def load(self):
+    def load(self, reload=False):
         assert not self.loaded
         assert not neuron.api._trigger_handlers
 
@@ -619,6 +619,11 @@ class Automation:
         except Exception:
             LOG.exception("Failed to load module %r", self.module_name)
             return
+
+        if reload:
+            # Make doubly sure the module is actually reloaded and not just
+            # quick-loaded from cache
+            self.module = importlib.reload(self.module)
 
         assert isinstance(self.module.__file__, str)
         self.module_path = Path(self.module.__file__).resolve()
