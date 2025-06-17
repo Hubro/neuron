@@ -151,7 +151,7 @@ async def auto_reload_task():
         while True:
             await e.wait()
             e.clear()
-            await signal_neuron_reload()
+            signal_neuron_reload()
     except asyncio.CancelledError:
         pass
 
