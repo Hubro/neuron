@@ -109,7 +109,7 @@ def log_tasks_and_threads():
     lines += [f"Tasks ({len(tasks)}):"]
     lines += [f"  - {fmt_task(task)}" for task in tasks]
 
-    LOG.info("\n".join(lines), extra={"highlighter": False})
+    LOG.info("\n".join(lines), extra={"highlighter": False, "markup": True})
 
 
 def debounce(seconds: float):

@@ -86,7 +86,10 @@ class PrettyHandler(rich.logging.RichHandler):
         else:
             component = ""
 
-        message = f" {escape(record.getMessage())}"
+        message = " " + record.getMessage()
+
+        if not getattr(record, "markup", False):
+            message = escape(message)
 
         return rf"{name}{component}{message}"
 
