@@ -7,7 +7,7 @@ import watchdog.observers
 
 from neuron.logging import get_logger
 
-from .util import terse_module_path
+from .util import debounce, terse_module_path
 
 LOG = get_logger(__name__)
 
@@ -18,18 +18,15 @@ async def watch_automation_modules(
     loop = asyncio.get_running_loop()
     touched = set()
     reload_event = asyncio.Event()
-    debounce_handle: asyncio.TimerHandle | None = None
+    set_reload_event = debounce(0.25)(reload_event.set)
 
-    # Sets the reload event, but debounced with a slight delay to reduce noise
-    def touch_paths(paths: set[str]):
-        nonlocal touched, debounce_handle
+    # Called whenever any paths are modified
+    def on_paths_modified(paths: set[str]):
+        nonlocal touched
 
         touched |= paths
 
-        if debounce_handle:
-            debounce_handle.cancel()
-
-        debounce_handle = loop.call_later(0.25, reload_event.set)
+        set_reload_event()
 
     observer = watchdog.observers.Observer()
     observer.setName("neuron-automation-module-watcher")
@@ -37,7 +34,7 @@ async def watch_automation_modules(
     for path in packages:
         LOG.debug("Watching %s", path)
         observer.schedule(
-            SourceChangeHandler(loop, touch_paths),
+            SourceChangeHandler(loop, on_paths_modified),
             path=str(path / "automations"),
         )
 
@@ -92,6 +89,9 @@ class SourceChangeHandler(watchdog.events.FileSystemEventHandler):
                     continue
 
                 touched.add(path)
+
+            if not touched:
+                return
 
             self.loop.call_soon_threadsafe(self.notify, touched)
         except Exception:

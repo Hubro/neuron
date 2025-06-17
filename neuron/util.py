@@ -117,7 +117,7 @@ def debounce(seconds: float):
 
     def decorator(fn: Callable):
         @wraps(fn)
-        async def wrapped(*args, **kwargs):
+        def wrapped(*args, **kwargs):
             nonlocal handle
 
             if handle:
