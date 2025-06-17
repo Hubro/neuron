@@ -108,9 +108,8 @@ def on_event(event: str = "*", **filter: Any):
 
     def decorator(handler: AsyncFunction):
         @wraps(handler)
-        async def wrapper(*args, **kwargs):
-            # FIXME: Event is not provided if it's not in the handler's kwargs
-            event = kwargs["event"]
+        async def wrapper(handler_kwargs, *args, **kwargs):
+            event = handler_kwargs["event"]
 
             for key, expected_value in filter.items():
                 event_value = event.get(key, None)
@@ -122,6 +121,9 @@ def on_event(event: str = "*", **filter: Any):
                     return
 
             await handler(*args, **kwargs)
+
+        # Flag this as an event handler wrapper, causing core to pass "handler_kwargs"
+        setattr(wrapper, "_event_handler_wrapper", True)
 
         _event_handlers.append((event, wrapper))
 

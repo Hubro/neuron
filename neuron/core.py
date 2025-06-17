@@ -194,6 +194,11 @@ class Neuron:
             try:
                 kwargs = filter_keyword_args(handler, handler_kwargs)
 
+                # If this is a handler wrapper made by "on_event", pass the
+                # full kwargs dict so it can be used for filtering
+                if getattr(handler, "_event_handler_wrapper", False):
+                    kwargs["handler_kwargs"] = handler_kwargs
+
                 with automation.override_api_logger():
                     await handler(**kwargs)
             except Exception:
