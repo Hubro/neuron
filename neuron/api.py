@@ -7,7 +7,16 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import wraps
 from math import floor
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Self, TypeAlias, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Self,
+    Sequence,
+    TypeAlias,
+    overload,
+)
 
 from neuron.logging import NeuronLogger, get_logger
 
@@ -416,4 +425,4 @@ class StateChange:
 
 
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
-EntityTarget: TypeAlias = str | Entity | list[str | Entity]
+EntityTarget: TypeAlias = str | Entity | Sequence[str | Entity]
