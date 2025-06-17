@@ -100,6 +100,7 @@ def on_event(event: str = "*", **filter: Any):
     def decorator(handler: AsyncFunction):
         @wraps(handler)
         async def wrapper(*args, **kwargs):
+            # FIXME: Event is not provided if it's not in the handler's kwargs
             event = kwargs["event"]
 
             for key, expected_value in filter.items():
@@ -206,9 +207,10 @@ def _reset():
 
 def _clear():
     """Clears registered handlers"""
-    global _trigger_handlers, _event_handlers
+    global _trigger_handlers, _event_handlers, _entities
     _trigger_handlers = []
     _event_handlers = []
+    _entities = {}
 
 
 class Entity:

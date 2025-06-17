@@ -279,7 +279,8 @@ class Neuron:
 
         automation.load(reload=reload)
 
-        await self.establish_subscriptions(automation)
+        establish_subscriptions = self.establish_subscriptions(automation)
+        await asyncio.wait_for(establish_subscriptions, timeout=10.0)
 
         # Wait for entities to saturate before calling init
         for entity in automation.entities.values():
