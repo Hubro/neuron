@@ -414,9 +414,23 @@ class Subscriptions:
         self._automation_map: dict[Automation, set[Subscription]] = {}
 
     def __iter__(self) -> Iterator[Subscription]:
-        """Iterate over all subscriptions"""
+        """Iterate over all subscriptions
 
-        for subscription in self._subscriptions.values():
+        The subscriptions are yielded in the order they should be processed.
+        Entity state subscriptions first, then events, then triggers. This
+        order ensures that all entities have the right state when trigger/event
+        handlers are executed.
+        """
+
+        def sort_key(sub: Subscription):
+            if sub.entities:
+                return 1
+            elif sub.event:
+                return 2
+            else:
+                return 3
+
+        for subscription in sorted(self._subscriptions.values(), key=sort_key):
             yield subscription
 
     @overload
