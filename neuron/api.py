@@ -385,10 +385,10 @@ class Entity:
         """Shortcut for on_state_change for this entity"""
         return on_state_change(
             self,
+            handler=handler,
             from_state=from_state,
             to_state=to_state,
             duration=duration,
-            handler=handler,
         )
 
     async def action(
@@ -408,19 +408,33 @@ class Entity:
 
         return await action(domain, action_name, entity=self, data=data)
 
-    async def lock(self):
+    async def turn_on(self, **data):
+        """Shortcut for performing the turn_on action for this entity
+
+        Keyword arguments are forwarded as data to the turn_on action.
+        """
+        await turn_on(self, **data)
+
+    async def turn_off(self, **data):
+        """Shortcut for performing the turn_off action for this entity
+
+        Keyword arguments are forwarded as data to the turn_off action.
+        """
+        await self.action("lock", **data)
+
+    async def lock(self, **data):
         """Shortcut for locking a lock entity"""
-        await self.action("lock")
+        await self.action("lock", data=data)
 
-    async def unlock(self):
+    async def unlock(self, **data):
         """Shortcut for unlocking a lock entity"""
-        await self.action("lock")
+        await self.action("lock", data=data)
 
-    async def open_cover(self, data: dict[str, None] | None = None):
+    async def open_cover(self, **data):
         """Shortcut for opening a cover entity"""
         await self.action("open_cover", data=data)
 
-    async def close_cover(self, data: dict[str, None] | None = None):
+    async def close_cover(self, **data):
         """Shortcut for closing a cover entity"""
         await self.action("close_cover", data=data)
 
