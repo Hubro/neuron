@@ -347,6 +347,14 @@ class Neuron:
         subscription.add_handler(automation, handler)
         self.subscriptions.add(subscription)
 
+    async def unsubscribe(self, handler: Callable, event_or_trigger: str | dict):
+        """Unsubscribes a handler from an event or trigger"""
+
+        subscription = self.subscriptions[event_or_trigger]
+        del subscription[handler]
+
+        await self.prune_subscriptions()
+
     async def eject_automation(self, automation: Automation):
         LOG.info("Ejecting automation: %s", automation.module_name)
 
@@ -557,9 +565,26 @@ class Subscription:
         """Returns True if the subscription has any handlers from the given automation"""
         return automation in self._handlers
 
-    def __delitem__(self, automation: Automation):
+    @overload
+    def __delitem__(self, x: Automation):
         """Deletes the handlers from the given automation"""
-        del self._handlers[automation]
+        ...
+
+    @overload
+    def __delitem__(self, x: Callable):
+        """Deletes the handler from the this subscription"""
+        ...
+
+    def __delitem__(self, x: Automation | Callable):
+        if isinstance(x, Automation):
+            del self._handlers[x]
+        else:
+            for automation, handlers in list(self._handlers.items()):
+                if x in handlers:
+                    handlers.remove(x)
+
+                    if not handlers:
+                        del self[automation]
 
     @property
     def key(self) -> str:
