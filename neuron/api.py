@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import wraps
@@ -12,6 +13,7 @@ from typing import (
     Any,
     Awaitable,
     Callable,
+    Coroutine,
     Self,
     Sequence,
     TypeAlias,
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
 __all__ = [
     "on_state_change",
     "on_event",
+    "unsubscribe",
     "daily",
     "action",
     "turn_on",
@@ -34,22 +37,55 @@ __all__ = [
     "Entity",
     "StateChange",
     "NeuronLogger",
+    "SubscriptionHandle",
 ]
 
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
 _event_handlers: list[tuple[str, AsyncFunction]] = []
 _entities: dict[str, Entity] = {}
 _neuron: Neuron | None = None
+_automation = ContextVar("automation")
 LOG = get_logger(__name__)
+
+
+@overload
+def on_state_change(
+    entity: EntityTarget,
+    *,
+    handler: None = None,
+    from_state: str | None = None,
+    to_state: str | None = None,
+    duration: timedelta | int | str | None = None,
+) -> Callable[[AsyncFunction], AsyncFunction]: ...
+
+
+@overload
+def on_state_change(
+    entity: EntityTarget,
+    *,
+    handler: AsyncFunction,
+    from_state: str | None = None,
+    to_state: str | None = None,
+    duration: timedelta | int | str | None = None,
+) -> Coroutine[None, None, SubscriptionHandle]: ...
 
 
 def on_state_change(
     entity: EntityTarget,
+    *,
+    handler: AsyncFunction | None = None,
     from_state: str | None = None,
     to_state: str | None = None,
     duration: timedelta | int | str | None = None,
+) -> (
+    Callable[[AsyncFunction], AsyncFunction] | Coroutine[None, None, SubscriptionHandle]
 ):
-    """Decorator for registering a state change handler"""
+    """Decorator for registering a state change handler
+
+    Can also be used imperatively by providing the handler parameter. The
+    decorator form must only be used at the module level. The imperative form
+    must only be used from handler functions or init.
+    """
 
     entity_id = _entity_id(entity)
 
@@ -81,11 +117,24 @@ def on_state_change(
 
         trigger["for"] = duration
 
+    if handler:
+        return _imperative_subscribe(handler, to=trigger)
+
     def decorator(handler: AsyncFunction):
         _trigger_handlers.append((trigger, handler))
         return handler
 
     return decorator
+
+
+async def _imperative_subscribe(
+    handler: AsyncFunction,
+    *,
+    to: str | dict[str, Any],
+) -> SubscriptionHandle:
+    await _n().subscribe(_automation.get(), handler, to=to)
+
+    return (to, handler)
 
 
 def on_event(event: str = "*", **filter: Any):
@@ -128,6 +177,20 @@ def on_event(event: str = "*", **filter: Any):
         _event_handlers.append((event, wrapper))
 
     return decorator
+
+
+async def unsubscribe(handle: SubscriptionHandle):
+    """Unsubscribe from an event using the handle returned from the subscribe function"""
+
+    event_or_trigger, handler = handle
+
+    # Somewhere up in the call stack, the list of automations and handlers are
+    # being iterated over, meaning things will go poorly if we mutate that list
+    # here and now. Schedule it to be done shortly instead.
+    asyncio.create_task(
+        _n().unsubscribe(handler, event_or_trigger),
+        name=f"unsubscribe-{handler.__name__}",
+    )
 
 
 def daily(at: str):
@@ -291,15 +354,41 @@ class Entity:
     def is_off(self) -> bool:
         return self.state == "off"
 
+    @overload
     def on_change(
         self,
+        *,
+        handler: None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        duration: timedelta | int | str | None = None,
+    ) -> Callable[[AsyncFunction], AsyncFunction]: ...
+
+    @overload
+    def on_change(
+        self,
+        *,
+        handler: AsyncFunction,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        duration: timedelta | int | str | None = None,
+    ) -> Coroutine[None, None, SubscriptionHandle]: ...
+
+    def on_change(
+        self,
+        *,
+        handler: AsyncFunction | None = None,
         from_state: str | None = None,
         to_state: str | None = None,
         duration: timedelta | int | str | None = None,
     ):
         """Shortcut for on_state_change for this entity"""
         return on_state_change(
-            self, from_state=from_state, to_state=to_state, duration=duration
+            self,
+            from_state=from_state,
+            to_state=to_state,
+            duration=duration,
+            handler=handler,
         )
 
     async def lock(self):
@@ -428,3 +517,4 @@ class StateChange:
 
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
 EntityTarget: TypeAlias = str | Entity | Sequence[str | Entity]
+SubscriptionHandle: TypeAlias = tuple[str | dict, AsyncFunction]

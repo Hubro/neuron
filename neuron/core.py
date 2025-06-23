@@ -199,7 +199,7 @@ class Neuron:
                 if getattr(handler, "_event_handler_wrapper", False):
                     kwargs["handler_kwargs"] = handler_kwargs
 
-                with automation.override_api_logger():
+                with automation.api_context():
                     await handler(**kwargs)
             except Exception:
                 logger = get_logger(handler.__module__)
@@ -295,10 +295,12 @@ class Neuron:
             kwargs = filter_keyword_args(
                 automation.module.init, {"log": automation.logger}
             )
-            result = automation.module.init(**kwargs)
 
-            if asyncio.iscoroutine(result):
-                await result
+            with automation.api_context():
+                result = automation.module.init(**kwargs)
+
+                if asyncio.iscoroutine(result):
+                    await result
 
     async def establish_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:
@@ -683,11 +685,13 @@ class Automation:
         self.loaded = True
 
     @contextmanager
-    def override_api_logger(self):
-        """Overrides the API logger for the duration of the context"""
+    def api_context(self):
+        """Readies the API context for executing handlers from this automation"""
 
         restore = neuron.api.LOG
         neuron.api.LOG = self.logger
+
+        neuron.api._automation.set(self)
 
         try:
             yield
