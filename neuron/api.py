@@ -391,15 +391,38 @@ class Entity:
             handler=handler,
         )
 
+    async def action(
+        self,
+        action_name: str,
+        *,
+        domain: str | None = None,
+        data: dict[str, Any] | None = None,
+    ):
+        """Shortcut for performing an action targeting this entity
+
+        Uses the entity's domain by default.
+        """
+
+        if domain is None:
+            domain = self.domain
+
+        return await action(domain, action_name, entity=self, data=data)
+
     async def lock(self):
         """Shortcut for locking a lock entity"""
-        assert self.domain == "lock"
-        await action("lock", "lock", self)
+        await self.action("lock")
 
     async def unlock(self):
         """Shortcut for unlocking a lock entity"""
-        assert self.domain == "lock"
-        await action("lock", "unlock", self)
+        await self.action("lock")
+
+    async def open_cover(self, data: dict[str, None] | None = None):
+        """Shortcut for opening a cover entity"""
+        await self.action("open_cover", data=data)
+
+    async def close_cover(self, data: dict[str, None] | None = None):
+        """Shortcut for closing a cover entity"""
+        await self.action("close_cover", data=data)
 
 
 @dataclass
