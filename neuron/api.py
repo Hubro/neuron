@@ -56,7 +56,7 @@ def on_state_change(
     from_state: str | None = None,
     to_state: str | None = None,
     duration: timedelta | int | str | None = None,
-) -> Callable[[AsyncFunction], AsyncFunction]: ...
+) -> Decorator: ...
 
 
 @overload
@@ -77,9 +77,7 @@ def on_state_change(
     from_state: str | None = None,
     to_state: str | None = None,
     duration: timedelta | int | str | None = None,
-) -> (
-    Callable[[AsyncFunction], AsyncFunction] | Coroutine[None, None, SubscriptionHandle]
-):
+) -> Decorator | Coroutine[None, None, SubscriptionHandle]:
     """Decorator for registering a state change handler
 
     Can also be used imperatively by providing the handler parameter. The
@@ -117,8 +115,33 @@ def on_state_change(
 
         trigger["for"] = duration
 
+    return on_trigger(trigger, handler=handler)
+
+
+@overload
+def on_trigger(trigger: dict, *, handler: None = None) -> Decorator: ...
+
+
+@overload
+def on_trigger(
+    trigger: dict, *, handler: AsyncFunction
+) -> Coroutine[None, None, SubscriptionHandle]: ...
+
+
+def on_trigger(
+    trigger: dict,
+    *,
+    handler: AsyncFunction | None = None,
+) -> Decorator | Coroutine[None, None, SubscriptionHandle]:
+    """Decorator for registering an arbitrary trigger subscription
+
+    Can also be used imperatively by providing the handler parameter. The
+    decorator form must only be used at the module level. The imperative form
+    must only be used from handler functions or init.
+    """
+
     if handler:
-        return _imperative_subscribe(handler, to=trigger)
+        return _subscribe(handler, to=trigger)
 
     def decorator(handler: AsyncFunction):
         _trigger_handlers.append((trigger, handler))
@@ -127,13 +150,12 @@ def on_state_change(
     return decorator
 
 
-async def _imperative_subscribe(
+async def _subscribe(
     handler: AsyncFunction,
     *,
     to: str | dict[str, Any],
 ) -> SubscriptionHandle:
     await _n().subscribe(_automation.get(), handler, to=to)
-
     return (to, handler)
 
 
@@ -193,14 +215,20 @@ async def unsubscribe(handle: SubscriptionHandle):
     )
 
 
-def daily(at: str):
+@overload
+def daily(at: str, handler: None = None) -> Decorator: ...
+
+
+@overload
+def daily(
+    at: str, handler: AsyncFunction
+) -> Coroutine[Any, Any, SubscriptionHandle]: ...
+
+
+def daily(at: str, handler: AsyncFunction | None = None):
     trigger = {"trigger": "time", "at": at}
 
-    def decorator(handler: Callable):
-        _trigger_handlers.append((trigger, handler))
-        return handler
-
-    return decorator
+    return on_trigger(trigger, handler=handler)
 
 
 async def action(
@@ -362,7 +390,7 @@ class Entity:
         from_state: str | None = None,
         to_state: str | None = None,
         duration: timedelta | int | str | None = None,
-    ) -> Callable[[AsyncFunction], AsyncFunction]: ...
+    ) -> Decorator: ...
 
     @overload
     def on_change(
@@ -555,3 +583,4 @@ class StateChange:
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
 EntityTarget: TypeAlias = str | Entity | Sequence[str | Entity]
 SubscriptionHandle: TypeAlias = tuple[str | dict, AsyncFunction]
+Decorator: TypeAlias = Callable[[AsyncFunction], AsyncFunction]
