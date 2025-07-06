@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from typing import Mapping, cast
 
 import orjson
@@ -35,7 +36,9 @@ def setup_file_logging():
 
     from .config import load_config
 
-    handler = logging.FileHandler(load_config().data_dir / "neuron.log")
+    suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+
+    handler = logging.FileHandler(load_config().data_dir / f"neuron_{suffix}.log")
     handler.setFormatter(JSONFormatter())
     get_logger().addHandler(handler)
 

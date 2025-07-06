@@ -8,7 +8,7 @@ from functools import cache
 from pathlib import Path
 
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
-DATA_DIR = os.environ.get("NEURON_DATA_DIR", "/data")
+DATA_DIR = os.environ.get("NEURON_DATA_DIR", "/config")
 HASS_WEBSOCKET_URI = os.environ.get(
     "HASS_WEBSOCKET_URI", "ws://supervisor/core/websocket"
 )
