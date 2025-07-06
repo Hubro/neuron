@@ -466,6 +466,10 @@ class Entity:
         """Shortcut for closing a cover entity"""
         await self.action("close_cover", data=data)
 
+    async def stop_cover(self, **data):
+        """Shortcut for stopping a cover entity"""
+        await self.action("stop_cover", data=data)
+
 
 @dataclass
 class StateChange:
