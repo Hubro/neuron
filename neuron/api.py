@@ -448,7 +448,7 @@ class Entity:
 
         Keyword arguments are forwarded as data to the turn_off action.
         """
-        await self.action("lock", **data)
+        await turn_off(self, **data)
 
     async def lock(self, **data):
         """Shortcut for locking a lock entity"""
