@@ -191,20 +191,29 @@ class Neuron:
         for automation, handler in self.subscriptions[id].handlers:
             handler_kwargs["log"] = automation.logger
 
+            handler_name = handler.__name__
+            handler_is_event_wrapper = getattr(handler, "_event_handler_wrapper", False)
+            handler_is_internal = (
+                getattr(handler, "__func__", None)
+                is Automation.subscribe_entities_handler
+            ) or handler_is_event_wrapper
+
             try:
                 kwargs = filter_keyword_args(handler, handler_kwargs)
 
                 # If this is a handler wrapper made by "on_event", pass the
                 # full kwargs dict so it can be used for filtering
-                if getattr(handler, "_event_handler_wrapper", False):
+                if handler_is_event_wrapper:
                     kwargs["handler_kwargs"] = handler_kwargs
 
                 with automation.api_context():
+                    if not handler_is_internal:
+                        automation.logger.info("Executing handler: %s", handler_name)
+
                     await handler(**kwargs)
             except Exception:
-                logger = get_logger(handler.__module__)
-                logger.exception(
-                    "Failed to execute subscription handler %r", handler.__name__
+                automation.logger.exception(
+                    "Failed to execute subscription handler %r", handler_name
                 )
 
     async def auto_reload_automations_task(self):

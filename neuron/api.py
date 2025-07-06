@@ -191,6 +191,7 @@ def on_event(event: str = "*", **filter: Any):
                 if event_value != expected_value:
                     return
 
+            LOG.info("Executing event handler: %s", handler.__name__)
             await handler(*args, **kwargs)
 
         # Flag this as an event handler wrapper, causing core to pass "handler_kwargs"
