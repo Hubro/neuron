@@ -708,7 +708,9 @@ class Automation:
 
             if "+" in state_object:
                 diff = state_object["+"]
-                entity._state = diff["s"]
+
+                if "s" in diff:
+                    entity._state = diff["s"]
 
                 if "a" in diff:
                     entity._attributes.update(diff["a"])
