@@ -293,14 +293,24 @@ class Neuron:
 
         automation.load(reload=reload)
 
+        LOG.debug("Establishing subscriptions")
         establish_subscriptions = self.establish_subscriptions(automation)
         await asyncio.wait_for(establish_subscriptions, timeout=10.0)
 
-        # Wait for entities to saturate before calling init
+        LOG.debug("Awaiting initial entity states before proceeding")
         for entity in automation.entities.values():
-            await entity.initialized.wait()
+            try:
+                async with asyncio.timeout(3.0):
+                    await entity.initialized.wait()
+            except asyncio.TimeoutError:
+                LOG.error(
+                    f"Timed out waiting for the initial state of {entity.entity_id!r}, perhaps it doesn't exist?"
+                )
+                await self.eject_automation(automation)
+                return
 
         if hasattr(automation.module, "init"):
+            LOG.debug("Executing the automation's init function")
             kwargs = filter_keyword_args(
                 automation.module.init, {"log": automation.logger}
             )
@@ -309,7 +319,10 @@ class Neuron:
                 result = automation.module.init(**kwargs)
 
                 if asyncio.iscoroutine(result):
+                    LOG.debug("Awaiting coroutine returned by init function")
                     await result
+
+        LOG.info("Automation loaded and initialized successfully")
 
     async def establish_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:
