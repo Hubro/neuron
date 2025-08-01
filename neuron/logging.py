@@ -74,8 +74,14 @@ class NeuronLogger(logging.Logger):
 
 
 class JSONFormatter(logging.Formatter):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
     def format(self, record: logging.LogRecord) -> str:
-        return orjson.dumps(record.__dict__, default=lambda x: "?").decode()
+        return orjson.dumps(
+            record.__dict__ | {"message": record.getMessage()},
+            default=lambda x: "?",
+        ).decode()
 
 
 class PrettyHandler(rich.logging.RichHandler):
