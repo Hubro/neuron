@@ -45,7 +45,8 @@ _event_handlers: list[tuple[str, AsyncFunction]] = []
 _entities: dict[str, Entity] = {}
 _neuron: Neuron | None = None
 _automation = ContextVar("automation")
-LOG = get_logger(__name__)
+_api_logger = get_logger(__name__)
+_logger = ContextVar("logger", default=_api_logger)
 
 
 @overload
@@ -191,7 +192,7 @@ def on_event(event: str = "*", **filter: Any):
                 if event_value != expected_value:
                     return
 
-            LOG.info("Executing event handler: %s", handler.__name__)
+            _l().info("Executing event handler: %s", handler.__name__)
             await handler(*args, **kwargs)
 
         # Flag this as an event handler wrapper, causing core to pass "handler_kwargs"
@@ -253,7 +254,7 @@ async def action(
     target = {"entity_id": entity_id} if entity_id else None
 
     if target:
-        LOG.info(
+        _l().info(
             "Performing action %s.%s on %r",
             domain,
             name,
@@ -261,7 +262,7 @@ async def action(
             extra={"component": "api"},
         )
     else:
-        LOG.info("Performing action %s.%s", domain, name, extra={"component": "api"})
+        _l().info("Performing action %s.%s", domain, name, extra={"component": "api"})
 
     return await _n().hass.perform_action(domain, name, target=target, data=data)
 
@@ -298,6 +299,10 @@ def _n() -> Neuron:
         raise RuntimeError("Tried to use automation API before Neuron setup")
 
     return _neuron
+
+
+def _l() -> NeuronLogger:
+    return _logger.get()
 
 
 def _reset():

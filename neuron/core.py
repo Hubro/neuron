@@ -710,15 +710,15 @@ class Automation:
     def api_context(self):
         """Readies the API context for executing handlers from this automation"""
 
-        restore = neuron.api.LOG
-        neuron.api.LOG = self.logger
+        restore = neuron.api._logger.get()
+        neuron.api._logger.set(self.logger)
 
         neuron.api._automation.set(self)
 
         try:
             yield
         finally:
-            neuron.api.LOG = restore
+            neuron.api._logger.set(restore)
 
     async def subscribe_entities_handler(self, entity_states: dict[str, Any]):
         for entity_id, state_object in entity_states.items():
