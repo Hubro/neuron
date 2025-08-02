@@ -1,11 +1,10 @@
 import asyncio
-import logging
 import signal
 import sys
 from pathlib import Path
 
 from .core import Neuron
-from .logging import get_logger
+from .logging import get_logger, setup_prod_logging
 
 LOG = get_logger(__name__)
 
@@ -13,11 +12,8 @@ LOG = get_logger(__name__)
 async def run_neuron():
     pythonpath_workaround()
 
-    logging.basicConfig(
-        level="TRACE",
-        stream=sys.stdout,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+    setup_prod_logging()
+
     neuron = Neuron()
 
     def terminate_handler(signal_number: int, _frame):

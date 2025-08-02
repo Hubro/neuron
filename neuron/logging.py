@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Mapping, cast
 
@@ -31,6 +32,16 @@ def setup_dev_logging():
     setup_file_logging()
 
 
+def setup_prod_logging():
+    logging.basicConfig(
+        level="TRACE",
+        stream=sys.stdout,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+
+    setup_file_logging()
+
+
 def setup_file_logging():
     """Sets up JSON logging to a local file"""
 
@@ -38,7 +49,23 @@ def setup_file_logging():
 
     suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
 
-    handler = logging.FileHandler(load_config().data_dir / f"neuron_{suffix}.log")
+    file_log_path = load_config().data_dir / f"neuron_{suffix}.log"
+
+    if not file_log_path.parent.exists():
+        try:
+            file_log_path.parent.mkdir()
+        except Exception:
+            get_logger().exception(
+                f"Log dir {file_log_path.parent!r} doesn't exist and could not be created"
+            )
+            return
+
+    try:
+        handler = logging.FileHandler(file_log_path)
+    except Exception:
+        get_logger().exception("Failed to set up file logging")
+        return
+
     handler.setFormatter(JSONFormatter())
     get_logger().addHandler(handler)
 
