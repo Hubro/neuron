@@ -14,6 +14,7 @@ from typing import (
     Awaitable,
     Callable,
     Coroutine,
+    Iterable,
     Self,
     Sequence,
     TypeAlias,
@@ -54,8 +55,10 @@ def on_state_change(
     entity: EntityTarget,
     *,
     handler: None = None,
-    from_state: str | None = None,
-    to_state: str | None = None,
+    from_state: str | Iterable[str] | None = None,
+    to_state: str | Iterable[str] | None = None,
+    not_from_state: str | Iterable[str] | None = None,
+    not_to_state: str | Iterable[str] | None = None,
     duration: timedelta | int | str | None = None,
 ) -> Decorator: ...
 
@@ -65,8 +68,10 @@ def on_state_change(
     entity: EntityTarget,
     *,
     handler: AsyncFunction,
-    from_state: str | None = None,
-    to_state: str | None = None,
+    from_state: str | Iterable[str] | None = None,
+    to_state: str | Iterable[str] | None = None,
+    not_from_state: str | Iterable[str] | None = None,
+    not_to_state: str | Iterable[str] | None = None,
     duration: timedelta | int | str | None = None,
 ) -> Coroutine[None, None, SubscriptionHandle]: ...
 
@@ -75,8 +80,10 @@ def on_state_change(
     entity: EntityTarget,
     *,
     handler: AsyncFunction | None = None,
-    from_state: str | None = None,
-    to_state: str | None = None,
+    from_state: str | Iterable[str] | None = None,
+    to_state: str | Iterable[str] | None = None,
+    not_from_state: str | Iterable[str] | None = None,
+    not_to_state: str | Iterable[str] | None = None,
     duration: timedelta | int | str | None = None,
 ) -> Decorator | Coroutine[None, None, SubscriptionHandle]:
     """Decorator for registering a state change handler
@@ -93,10 +100,20 @@ def on_state_change(
         "entity_id": entity_id,
     }
 
+    def flatten(state: str | Iterable[str] | None) -> str | list[str] | None:
+        if isinstance(state, str) or state is None:
+            return state
+        else:
+            return list(state)
+
     if from_state:
-        trigger["from"] = from_state
+        trigger["from"] = flatten(from_state)
     if to_state:
-        trigger["to"] = to_state
+        trigger["to"] = flatten(to_state)
+    if not_from_state:
+        trigger["not_from"] = flatten(not_from_state)
+    if not_to_state:
+        trigger["not_to"] = flatten(not_to_state)
     if duration:
         if isinstance(duration, int):
             duration = timedelta(seconds=duration)
@@ -393,8 +410,10 @@ class Entity:
         self,
         *,
         handler: None = None,
-        from_state: str | None = None,
-        to_state: str | None = None,
+        from_state: str | Iterable[str] | None = None,
+        to_state: str | Iterable[str] | None = None,
+        not_from_state: str | Iterable[str] | None = None,
+        not_to_state: str | Iterable[str] | None = None,
         duration: timedelta | int | str | None = None,
     ) -> Decorator: ...
 
@@ -403,8 +422,10 @@ class Entity:
         self,
         *,
         handler: AsyncFunction,
-        from_state: str | None = None,
-        to_state: str | None = None,
+        from_state: str | Iterable[str] | None = None,
+        to_state: str | Iterable[str] | None = None,
+        not_from_state: str | Iterable[str] | None = None,
+        not_to_state: str | Iterable[str] | None = None,
         duration: timedelta | int | str | None = None,
     ) -> Coroutine[None, None, SubscriptionHandle]: ...
 
@@ -412,8 +433,10 @@ class Entity:
         self,
         *,
         handler: AsyncFunction | None = None,
-        from_state: str | None = None,
-        to_state: str | None = None,
+        from_state: str | Iterable[str] | None = None,
+        to_state: str | Iterable[str] | None = None,
+        not_from_state: str | Iterable[str] | None = None,
+        not_to_state: str | Iterable[str] | None = None,
         duration: timedelta | int | str | None = None,
     ):
         """Shortcut for on_state_change for this entity"""
@@ -422,6 +445,8 @@ class Entity:
             handler=handler,
             from_state=from_state,
             to_state=to_state,
+            not_from_state=not_from_state,
+            not_to_state=not_to_state,
             duration=duration,
         )
 
