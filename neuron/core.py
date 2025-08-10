@@ -188,7 +188,15 @@ class Neuron:
         else:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
 
-        for automation, handler in self.subscriptions[id].handlers:
+        # The subscriptions might mutate as a result of dispatching this event,
+        # so we need to copy the list of handlers before iterating over it
+        handlers = self.subscriptions[id].handlers.copy()
+
+        for automation, handler in handlers:
+            # In case the handler was unsubscribed in a previous iteration
+            if (automation, handler) not in self.subscriptions[id].handlers:
+                continue
+
             handler_kwargs["log"] = automation.logger
 
             handler_name = handler.__name__

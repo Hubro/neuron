@@ -173,6 +173,7 @@ async def _subscribe(
     *,
     to: str | dict[str, Any],
 ) -> SubscriptionHandle:
+    _l().info("Subscribing handler %r to %r", handler.__name__, to)
     await _n().subscribe(_automation.get(), handler, to=to)
     return (to, handler)
 
@@ -225,13 +226,9 @@ async def unsubscribe(handle: SubscriptionHandle):
 
     event_or_trigger, handler = handle
 
-    # Somewhere up in the call stack, the list of automations and handlers are
-    # being iterated over, meaning things will go poorly if we mutate that list
-    # here and now. Schedule it to be done shortly instead.
-    asyncio.create_task(
-        _n().unsubscribe(handler, event_or_trigger),
-        name=f"unsubscribe-{handler.__name__}",
-    )
+    _l().info("Unsubscribing handler %r from %r", handler.__name__, event_or_trigger)
+
+    await _n().unsubscribe(handler, event_or_trigger)
 
 
 @overload
