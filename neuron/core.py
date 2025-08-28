@@ -134,13 +134,8 @@ class Neuron:
                         pass
 
                     if event is reconnected:
-                        LOG.info(
-                            "Reconnected to Home Assistant, restarting subscriptions"
-                        )
-                        self.subscriptions = Subscriptions()
-
-                        for automation in self.automations.values():
-                            await self.establish_subscriptions(automation)
+                        LOG.info("Reconnected to Home Assistant")
+                        await self.reestablish_subscriptions()
 
         except asyncio.CancelledError:
             return
@@ -353,6 +348,24 @@ class Neuron:
                 automation.subscribe_entities_handler,
                 to=list(automation.entities.values()),
             )
+
+    async def reestablish_subscriptions(self):
+        """Re-establishes all subscriptions after reconnecting to Home Assistant
+
+        Note: This function assumes that all current subscriptions are already
+        dead and the HA connection is fresh. Old subscriptions are dropped with
+        no cleanup.
+        """
+
+        LOG.info("Re-establishing subscriptions")
+
+        old_subscriptions = self.subscriptions
+        self.subscriptions = Subscriptions()
+
+        for old_subscription in old_subscriptions:
+            for automation in old_subscription.automations:
+                for handler in old_subscription[automation]:
+                    await self.subscribe(automation, handler, to=old_subscription.key)
 
     async def subscribe(
         self,
