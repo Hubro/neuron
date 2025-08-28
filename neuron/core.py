@@ -216,8 +216,8 @@ class Neuron:
 
                 with automation.api_context():
                     if not handler_is_internal:
-                        automation.logger.info("Executing handler: %s", handler_name)
-                        automation.logger.debug("Handler arguments: %r", handler_kwargs)
+                        automation.logger.debug("Executing handler: %s", handler_name)
+                        automation.logger.trace("Handler arguments: %r", handler_kwargs)
 
                     await handler(**kwargs)
             except Exception:
