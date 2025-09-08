@@ -299,6 +299,11 @@ class Neuron:
 
         automation.load(reload=reload)
 
+        # No point in proceeding if loading the module failed. An error has
+        # already been logged.
+        if not automation.module:
+            return
+
         LOG.debug("Establishing subscriptions")
         establish_subscriptions = self.establish_subscriptions(automation)
         await asyncio.wait_for(establish_subscriptions, timeout=10.0)
@@ -679,7 +684,7 @@ class Subscription:
 
 class Automation:
     module_name: str
-    module: ModuleType
+    module: ModuleType | None
     module_path: Path
     loaded: bool
     logger: NeuronLogger
@@ -690,6 +695,7 @@ class Automation:
     def __init__(self, module_path: Path):
         package_path = module_path.parent.parent
         self.module_name = f"{package_path.name}.automations.{module_path.stem}"
+        self.module = None
         self.module_path = module_path
         self.loaded = False
         self.logger = get_logger(self.module_name)
