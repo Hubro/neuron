@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "on_state_change",
+    "on_trigger",
     "on_event",
     "unsubscribe",
     "daily",
