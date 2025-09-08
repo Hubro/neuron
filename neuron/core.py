@@ -73,15 +73,14 @@ class Neuron:
 
             for task in done:
                 if e := task.exception():
+                    LOG.exception("Unhandled exception in task %r", task.get_name())
                     raise e
                 elif task.get_name() == "neuron_wait-for-stop-signal":
                     pass
                 else:
-                    raise RuntimeError(
+                    LOG.fatal(
                         f"Background task {task.get_name()} has exited unexpectedly!"
                     )
-
-            return
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
@@ -251,7 +250,10 @@ class Neuron:
                 if module_path.name == "__init__.py":
                     continue
 
-                await self.load_automation(module_path)
+                try:
+                    await self.load_automation(module_path)
+                except Exception:
+                    LOG.exception("Failed to load automation: %s", module_path.name)
 
     async def reload_automations(self, module_paths: list[str]):
         """Reloads the given automation module paths"""
