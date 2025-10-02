@@ -1,0 +1,11 @@
+name: Neuron
+version: 0.0.0
+description: "Companion integration for the Neuron addon"
+startup: "services"
+boot: "auto"
+homeassistant_api: true
+host_network: false
+options: {}
+schema: {}
+discovery:
+  - neuron

@@ -21,3 +21,5 @@ homeassistant_api: true
 map:
   - addon_config:rw
   - media:rw
+discovery:
+  - neuron

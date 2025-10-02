@@ -18,7 +18,7 @@ ENV POETRY_CONFIG_DIR=/app/.poetry/config
 ENV POETRY_DATA_DIR=/app/.poetry/data
 ENV POETRY_CACHE_DIR=/app/.poetry/cache
 COPY pyproject.toml poetry.lock ./
-RUN poetry install --no-root
+RUN poetry install --no-root --without=dev
 
 COPY . ./
 RUN poetry install --only-root
