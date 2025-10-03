@@ -104,6 +104,10 @@ class HASS:
 
         LOG.info("Connection re-established!")
 
+        # FIXME: Ref: https://github.com/home-assistant/home-assistant-js-websocket/issues/555
+        LOG.warning("Waiting 30 seconds before proceeding")
+        await asyncio.sleep(30)
+
         self.on_reconnect.emit()
 
     async def message_handler_task(self):
