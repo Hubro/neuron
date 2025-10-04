@@ -13,7 +13,7 @@ HASS_WEBSOCKET_URI = os.environ.get(
     "HASS_WEBSOCKET_URI", "ws://supervisor/core/websocket"
 )
 HASS_API_TOKEN = (
-    os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HOME_ASSISTANT_TOKEN") or ""
+    os.environ.get("HOME_ASSISTANT_TOKEN") or os.environ.get("SUPERVISOR_TOKEN") or ""
 )
 assert HASS_API_TOKEN, "Home Assistant API token not set"
 
