@@ -186,7 +186,12 @@ class HASS:
         /,
         target: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
-    ):
+    ) -> bool:
+        """Performs an action ("calls a service" in old lingo)
+
+        Returns True on success, False on failure.
+        """
+
         message_body: dict[str, Any] = {
             "type": "call_service",
             "domain": domain,
@@ -203,7 +208,9 @@ class HASS:
 
         if not response["success"]:
             LOG.error("Failed to perform action: %s", response["error"]["message"])
-            return
+            return False
+
+        return True
 
     async def subscribe_to_events(self, event: str = "*") -> int:
         message = {"type": "subscribe_events"}
