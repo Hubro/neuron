@@ -73,7 +73,9 @@ class Neuron:
 
             for task in done:
                 if e := task.exception():
-                    LOG.exception("Unhandled exception in task %r", task.get_name())
+                    LOG.exception(
+                        "Unhandled exception in task %r", task.get_name(), exc_info=e
+                    )
                     raise e
                 elif task.get_name() == "neuron_wait-for-stop-signal":
                     pass
@@ -81,6 +83,8 @@ class Neuron:
                     LOG.fatal(
                         f"Background task {task.get_name()} has exited unexpectedly!"
                     )
+
+            LOG.warning("Shutting down because one or more background tasks failed")
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
