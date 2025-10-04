@@ -12,6 +12,7 @@ dependencies = [
     "orjson (>=3.10.18,<4.0.0)",
     "watchdog (>=6.0.0,<7.0.0)",
     "sanic (>=25.3.0,<26.0.0)",
+    "pydantic (>=2.11.9,<3.0.0)",
 ]
 packages = [ "neuron" ]
 

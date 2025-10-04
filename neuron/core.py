@@ -74,6 +74,8 @@ class Neuron:
         # the core tasks
         asyncio.create_task(self.load_automations(), name="neuron-load_automations")
 
+        await self.subscribe(NEURON_CORE, self.integration_message_handler, to="neuron")
+
         try:
             done, pending = await asyncio.wait(
                 self.tasks, return_when=asyncio.FIRST_COMPLETED
@@ -94,10 +96,8 @@ class Neuron:
 
             LOG.warning("Shutting down because one or more background tasks failed")
         except (KeyboardInterrupt, asyncio.CancelledError):
-            pass
-        finally:
             LOG.info("Shutting down gracefully")
-
+        finally:
             try:
                 await asyncio.wait_for(self._shutdown(), timeout=2)
                 LOG.info("Bye!")
@@ -393,6 +393,34 @@ class Neuron:
             for automation in old_subscription.automations:
                 for handler in old_subscription[automation]:
                     await self.subscribe(automation, handler, to=old_subscription.key)
+
+    async def integration_message_handler(self, event_type: str, event: dict[str, Any]):
+        assert event_type == "neuron"
+
+        try:
+            message = neuron.bus.parse_message(event)
+        except Exception:
+            LOG.exception("Failed to parse Neuron integration message")
+            return
+
+        LOG.debug("Got message from Neuron companion integration: %r", message)
+
+        match message:
+            case neuron.bus.RequestingFullUpdate():
+                payload = neuron.bus.FullUpdate(
+                    automations=[
+                        neuron.bus.AutomationModel(
+                            name=automation.name,
+                            enabled=True,
+                            event_listeners=len(automation.event_handlers),
+                        )
+                        for automation in self.automations.values()
+                    ]
+                )
+
+                await self.hass.fire_event("neuron", data=payload.model_dump())
+            case _:
+                LOG.error("Unexpected message from Neuron integration: %r", message)
 
     async def subscribe(
         self,

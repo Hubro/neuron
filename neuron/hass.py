@@ -218,6 +218,25 @@ class HASS:
 
         return True
 
+    async def fire_event(self, event_type: str, data: dict[str, Any] | None):
+        message: dict[str, Any] = {
+            "type": "fire_event",
+            "event_type": event_type,
+        }
+
+        if data:
+            message["event_data"] = data
+
+        response = await self.message(message)
+
+        if not response["success"]:
+            LOG.error(
+                "Failed to fire event of type %r (data=%r): %r",
+                event_type,
+                data,
+                response["error"]["message"],
+            )
+
     async def subscribe_to_events(self, event: str = "*") -> int:
         message = {"type": "subscribe_events"}
 
