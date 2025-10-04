@@ -207,7 +207,13 @@ class HASS:
         response = await self.message(message_body)
 
         if not response["success"]:
-            LOG.error("Failed to perform action: %s", response["error"]["message"])
+            LOG.error(
+                'Failed to perform action "%s/%s" (target=%r): %r',
+                domain,
+                name,
+                target,
+                response["error"]["message"],
+            )
             return False
 
         return True
