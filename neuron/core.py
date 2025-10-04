@@ -1,3 +1,4 @@
+# pyright: enableExperimentalFeatures=true
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +10,10 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Iterator, overload
 
+from typing_extensions import Sentinel
+
 import neuron.api
+import neuron.bus
 
 from .api import Entity, StateChange
 from .config import Config, load_config
@@ -24,6 +28,10 @@ from .util import (
 from .watch import watch_automation_modules
 
 LOG = get_logger(__name__)
+
+
+# Used in place of Automation in some places to represent Neutron core
+NEURON_CORE = Sentinel("NEURON_CORE")
 
 
 class Neuron:
@@ -195,7 +203,9 @@ class Neuron:
             if (automation, handler) not in self.subscriptions[id].handlers:
                 continue
 
-            handler_kwargs["log"] = automation.logger
+            logger = LOG if automation is NEURON_CORE else automation.logger
+
+            handler_kwargs["log"] = logger
 
             handler_name = handler.__name__
             handler_is_event_wrapper = getattr(handler, "_event_handler_wrapper", False)
@@ -212,14 +222,17 @@ class Neuron:
                 if handler_is_event_wrapper:
                     kwargs["handler_kwargs"] = handler_kwargs
 
-                with automation.api_context():
-                    if not handler_is_internal:
-                        automation.logger.debug("Executing handler: %s", handler_name)
-                        automation.logger.trace("Handler arguments: %r", handler_kwargs)
+                if not handler_is_internal:
+                    logger.debug("Executing handler: %s", handler_name)
+                    logger.trace("Handler arguments: %r", handler_kwargs)
 
+                if automation is NEURON_CORE:
                     await handler(**kwargs)
+                else:
+                    with automation.api_context():
+                        await handler(**kwargs)
             except Exception:
-                automation.logger.exception(
+                logger.exception(
                     "Failed to execute subscription handler %r", handler_name
                 )
 
@@ -374,13 +387,16 @@ class Neuron:
         self.subscriptions = Subscriptions()
 
         for old_subscription in old_subscriptions:
+            for handler in old_subscription[NEURON_CORE]:
+                await self.subscribe(NEURON_CORE, handler, to=old_subscription.key)
+
             for automation in old_subscription.automations:
                 for handler in old_subscription[automation]:
                     await self.subscribe(automation, handler, to=old_subscription.key)
 
     async def subscribe(
         self,
-        automation: Automation,
+        automation: Automation | NEURON_CORE,
         handler: Callable,
         *,
         to: str | dict[str, Any] | list[Entity],
@@ -476,7 +492,7 @@ class Subscriptions:
         # overlap between subscription types.
         self._reverse_map: dict[str, Subscription] = {}
 
-        self._automation_map: dict[Automation, set[Subscription]] = {}
+        self._automation_map: dict[Automation | NEURON_CORE, set[Subscription]] = {}
 
     def __iter__(self) -> Iterator[Subscription]:
         """Iterate over all subscriptions
@@ -506,12 +522,17 @@ class Subscriptions:
         ...
 
     @overload
+    def __getitem__[T](self, key: NEURON_CORE) -> set[Subscription]:
+        """Returns all Neutron internal subscriptions"""
+        ...
+
+    @overload
     def __getitem__(self, key: Automation) -> set[Subscription]:
         """Returns all subscriptions for an automation"""
         ...
 
     def __getitem__(
-        self, key: int | str | dict[str, Any] | Automation | list[Entity]
+        self, key: int | str | dict[str, Any] | Automation | NEURON_CORE | list[Entity]
     ) -> Subscription | set[Subscription]:
         if isinstance(key, int):
             return self._subscriptions[key]
@@ -532,13 +553,18 @@ class Subscriptions:
         ...
 
     @overload
+    def get[T](self, key: NEURON_CORE, default: T = None) -> set[Subscription] | T:
+        """Returns all Neutron internal subscriptions"""
+        ...
+
+    @overload
     def get[T](self, key: Automation, default: T = None) -> set[Subscription] | T:
         """Returns all subscriptions for an automation"""
         ...
 
     def get[T](
         self,
-        key: int | str | dict[str, Any] | list[Entity] | Automation,
+        key: int | str | dict[str, Any] | list[Entity] | Automation | NEURON_CORE,
         default: T = None,
     ) -> Subscription | set[Subscription] | T:
         try:
@@ -547,7 +573,7 @@ class Subscriptions:
             return default
 
     def __contains__(
-        self, key: int | str | list[Entity] | dict[str, Any] | Automation
+        self, key: int | str | list[Entity] | dict[str, Any] | Automation | NEURON_CORE
     ) -> bool:
         if isinstance(key, int):
             return key in self._subscriptions
@@ -595,7 +621,9 @@ class Subscription:
     trigger: dict | None = None  # Provide if trigger subscription
     entities: list[Entity] | None = None  # Provide if entities subscription
 
-    _handlers: dict[Automation, list[Callable]] = field(default_factory=dict)
+    _handlers: dict[Automation | NEURON_CORE, list[Callable]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self):
         if (
@@ -614,26 +642,44 @@ class Subscription:
             for handler in handlers:
                 yield handler
 
+    @overload
     def __getitem__(self, automation: Automation) -> list[Callable]:
         """Returns all the handlers for this subscription from the given automation"""
+        ...
+
+    @overload
+    def __getitem__(self, automation: NEURON_CORE) -> list[Callable]:
+        """Returns all Neuron internal handlers for this subscription"""
+        ...
+
+    def __getitem__(self, automation: Automation | NEURON_CORE) -> list[Callable]:
         return self._handlers[automation]
 
+    @overload
     def __contains__(self, automation: Automation) -> bool:
-        """Returns True if the subscription has any handlers from the given automation"""
+        """Returns True if the subscription has any internal Neuron handlers"""
         return automation in self._handlers
 
     @overload
-    def __delitem__(self, x: Automation):
+    def __contains__(self, automation: NEURON_CORE) -> bool:
+        """Returns True if the subscription has any handlers from the given automation"""
+        return automation in self._handlers
+
+    def __contains__(self, automation: Automation | NEURON_CORE) -> bool:
+        return automation in self._handlers
+
+    @overload
+    def __delitem__(self, x: Automation | NEURON_CORE):
         """Deletes the handlers from the given automation"""
         ...
 
     @overload
     def __delitem__(self, x: Callable):
-        """Deletes the handler from the this subscription"""
+        """Deletes the given handler from this subscription"""
         ...
 
-    def __delitem__(self, x: Automation | Callable):
-        if isinstance(x, Automation):
+    def __delitem__(self, x: Automation | NEURON_CORE | Callable):
+        if isinstance(x, Automation) or x is NEURON_CORE:
             del self._handlers[x]
         else:
             for automation, handlers in list(self._handlers.items()):
@@ -657,10 +703,10 @@ class Subscription:
     @property
     def automations(self) -> list[Automation]:
         """Returns all automations with handlers for this subscription"""
-        return list(self._handlers.keys())
+        return [x for x in self._handlers.keys() if isinstance(x, Automation)]
 
     @property
-    def handlers(self) -> list[tuple[Automation, Callable]]:
+    def handlers(self) -> list[tuple[Automation | NEURON_CORE, Callable]]:
         """Returns all handlers for this subscription"""
 
         result = []
@@ -671,14 +717,16 @@ class Subscription:
 
         return result
 
-    def add_handler(self, automation: Automation, handler: Callable):
+    def add_handler(self, automation: Automation | NEURON_CORE, handler: Callable):
         handlers = self._handlers.setdefault(automation, [])
+
+        source = "core" if automation is NEURON_CORE else automation.module_name
 
         if handler in handlers:
             LOG.error(
                 "Refusing to add handler %r (from %s) to subscription %r more than once",
                 handler.__name__,
-                automation.module_name,
+                source,
                 self.id,
             )
             return

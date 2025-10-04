@@ -27,6 +27,8 @@ class HASS:
     messages: Messages
     on_reconnect: EventEmitter
     on_new_message: EventEmitter
+    lock: asyncio.Lock
+    ready: asyncio.Event
 
     def __init__(self, websocket_uri: str, token: str) -> None:
         self.websocket_uri = websocket_uri
@@ -34,9 +36,10 @@ class HASS:
         self.messages = Messages()
         self.on_reconnect = EventEmitter()
         self.on_new_message = EventEmitter()
+        self.lock = asyncio.Lock()
+        self.ready = asyncio.Event()  # Set when connection is ready to rock
 
         self._ws: websockets.ClientConnection | None = None
-        self._handler_task_started = False
         self._new_message_event = self.messages.on_new_message.event()
 
     @property
@@ -57,12 +60,17 @@ class HASS:
         assert request["type"] == "auth_required"
 
         LOG.debug("Sending auth message...")
-        response = await self.message(
-            {
-                "type": "auth",
-                "access_token": self.token,
-            }
+        await self.ws.send(
+            orjson.dumps(
+                {
+                    "type": "auth",
+                    "access_token": self.token,
+                }
+            ),
+            text=True,
         )
+        response = orjson.loads(await self.ws.recv())
+        LOG.debug("Response from Home Assistant: %r", response)
 
         if response["type"] == "auth_ok":
             LOG.info("Home Assistant authentication successful")
@@ -72,12 +80,18 @@ class HASS:
             raise RuntimeError("Unexpected response: %r", response)
 
         LOG.debug("Enabling coalesced messages feature")
-        response = await self.message(
-            {
-                "type": "supported_features",
-                "features": {"coalesce_messages": 1},
-            }
+        await self.ws.send(
+            orjson.dumps(
+                {
+                    "id": self.messages.next_id(),
+                    "type": "supported_features",
+                    "features": {"coalesce_messages": 1},
+                }
+            ),
+            text=True,
         )
+        response = orjson.loads(await self.ws.recv())
+        LOG.debug("Response from Home Assistant: %r", response)
         assert response["success"]
 
     async def disconnect(self):
@@ -85,7 +99,7 @@ class HASS:
         await self.ws.wait_closed()
 
     async def reconnect(self):
-        self._handler_task_started = False
+        self.ready.clear()
         self.messages.reset()
         LOG.info("Attempting to reconnect to Home Assistant...")
 
@@ -115,7 +129,7 @@ class HASS:
 
         async def process_messages():
             while True:
-                self._handler_task_started = True
+                self.ready.set()
 
                 try:
                     async for msg in self.ws:
@@ -144,38 +158,24 @@ class HASS:
     async def message(self, msg: dict[str, Any]) -> Any:
         """Sends a message to Home Assistant and returns the response"""
 
-        msg = msg.copy()
+        # No point in proceeding before we're connected and authenticated
+        await self.ready.wait()
 
-        # The initial auth message should have no message ID
-        if msg["type"] == "auth":
-            id = 0
-        else:
-            id = self.messages.next_id()
-            msg["id"] = id
+        id = self.messages.next_id()
+        msg = {**msg, "id": id}
+        LOG.debug("Sending message to Home Assistant: %r", msg)
 
-            # Also let's not debug log the access token of the auth message
-            LOG.debug("Sending message to Home Assistant: %r", msg)
+        async with self.lock:
+            await self.ws.send(orjson.dumps(msg), text=True)
 
-        await self.ws.send(orjson.dumps(msg), text=True)
+        # Now we wait for the response
+        while True:
+            response = self.messages.pop_message(id)
 
-        if not self._handler_task_started:
-            # If the message handler hasn't been started yet, fetch the
-            # response manually
-            response = orjson.loads(await self.ws.recv())
-            LOG.debug("Received response: %r", response)
+            if response:
+                break
 
-            if "id" in msg:
-                assert response["id"] == msg["id"]
-        else:
-            # If the message handler is running, wait for the response to show
-            # up in the message cache
-            while True:
-                response = self.messages.pop_message(id)
-
-                if response:
-                    break
-
-                await self._new_message_event.wait()
+            await self._new_message_event.wait()
 
         return response
 
