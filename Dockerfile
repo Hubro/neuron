@@ -1,5 +1,7 @@
 FROM python:3-alpine
 
+RUN apk add build-base   # For building Python dependencies
+
 RUN pip --isolated --no-cache-dir install poetry && \
     mkdir /app
 
