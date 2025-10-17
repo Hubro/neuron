@@ -4,8 +4,6 @@ This module is symlinked into the integration and dereferenced when installing.
 That way they share the exact same code for message parsing.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, RootModel
@@ -18,26 +16,26 @@ class BaseMessage(BaseModel):
 class RequestingFullUpdate(BaseMessage):
     """Used by the integration to request a full dump of Sedrec's state"""
 
-    type: Literal["requesting-full-update"]
+    type: Literal["requesting-full-update"] = "requesting-full-update"
 
 
 class FullUpdate(BaseMessage):
     type: Literal["full-update"] = "full-update"
-    automations: list[AutomationModel]
+    automations: "list[Automation]"
 
 
 Message = RequestingFullUpdate | FullUpdate
 
 
-# Pydantic bugs out and fails validation if I use the same class name as any
-# other class in the whole code base...
-class AutomationModel(BaseModel):
+class Automation(BaseModel):
     name: str
     enabled: bool
-    event_listeners: int
+    trigger_subscriptions: int
+    event_subscriptions: int
+    state_subscriptions: int
 
 
-def parse_message(msg: Mapping[str, Any]) -> Message:
+def parse_message(msg: Mapping[str, Any]) -> "Message":
     return RootModel[
         Annotated[
             Message,

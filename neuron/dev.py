@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import logging
-import os
 import signal
 import sys
 
-import rich.logging
 
 from neuron.logging import get_logger, setup_dev_logging
 from neuron.util import debounce
@@ -166,6 +163,11 @@ def reload_neuron():
     ]
 
     for module in neuron_modules:
+        # Pydantic stinks hairy donkey balls, so if I reload a module that
+        # contains Pydantic models, it immediately breaks those models forever.
+        if module.__name__ == "neuron.bus":
+            continue
+
         LOG.info("Reloading module: %s", module.__name__)
         importlib.reload(module)
 

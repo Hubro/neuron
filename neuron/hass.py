@@ -9,6 +9,7 @@ import websockets
 from .event_emitter import EventEmitter
 from .logging import get_logger
 from .util import stringify
+from .config import DEV
 
 if TYPE_CHECKING:
     from .api import Entity
@@ -119,8 +120,9 @@ class HASS:
         LOG.info("Connection re-established!")
 
         # FIXME: Ref: https://github.com/home-assistant/home-assistant-js-websocket/issues/555
-        LOG.warning("Waiting 30 seconds before proceeding")
-        await asyncio.sleep(30)
+        if not DEV:
+            LOG.warning("Waiting 30 seconds before proceeding")
+            await asyncio.sleep(30)
 
         self.on_reconnect.emit()
 

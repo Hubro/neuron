@@ -6,6 +6,7 @@ import importlib
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Iterator, overload
@@ -74,6 +75,7 @@ class Neuron:
         # the core tasks
         asyncio.create_task(self.load_automations(), name="neuron-load_automations")
 
+        LOG.info("Subscribing to messages from the Neuron integration")
         await self.subscribe(NEURON_CORE, self.integration_message_handler, to="neuron")
 
         try:
@@ -395,6 +397,8 @@ class Neuron:
                     await self.subscribe(automation, handler, to=old_subscription.key)
 
     async def integration_message_handler(self, event_type: str, event: dict[str, Any]):
+        """Event handler for messages from the Neuron integration"""
+
         assert event_type == "neuron"
 
         try:
@@ -403,24 +407,29 @@ class Neuron:
             LOG.exception("Failed to parse Neuron integration message")
             return
 
-        LOG.debug("Got message from Neuron companion integration: %r", message)
+        LOG.trace("Got message from Neuron companion integration: %r", message)
 
         match message:
             case neuron.bus.RequestingFullUpdate():
                 payload = neuron.bus.FullUpdate(
                     automations=[
-                        neuron.bus.AutomationModel(
+                        neuron.bus.Automation(
                             name=automation.name,
                             enabled=True,
-                            event_listeners=len(automation.event_handlers),
+                            trigger_subscriptions=len(automation.trigger_handlers),
+                            event_subscriptions=len(automation.event_handlers),
+                            state_subscriptions=len(automation.entities),
                         )
                         for automation in self.automations.values()
                     ]
                 )
 
+                LOG.info("Sending full update to Neuron integration | %r", payload)
                 await self.hass.fire_event("neuron", data=payload.model_dump())
-            case _:
-                LOG.error("Unexpected message from Neuron integration: %r", message)
+            case neuron.bus.FullUpdate():
+                pass  # We sent this message
+            case other:
+                assert_never(other)
 
     async def subscribe(
         self,
@@ -789,6 +798,10 @@ class Automation:
     def __hash__(self) -> int:
         return hash(self.module_name)
 
+    @cached_property
+    def name(self) -> str:
+        return self.module_name.split(".")[-1]
+
     def load(self, reload=False):
         assert not self.loaded
         assert not neuron.api._trigger_handlers
@@ -813,7 +826,6 @@ class Automation:
         self.entities = neuron.api._entities.copy()
         neuron.api._clear()
 
-        self.name = getattr(self.module, "NAME", self.module_name)
         self.loaded = True
 
     @contextmanager
