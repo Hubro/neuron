@@ -204,6 +204,11 @@ class Neuron:
         # so we need to copy the list of handlers before iterating over it
         handlers = self.subscriptions[id].handlers.copy()
 
+        # FIXME: Quick dirty hack, fix ASAP!
+        object.__setattr__(
+            self.subscriptions[id], "last_message", {**event_msg, "id": id}
+        )
+
         for automation, handler in handlers:
             # In case the handler was unsubscribed in a previous iteration
             if (automation, handler) not in self.subscriptions[id].handlers:
@@ -272,6 +277,8 @@ class Neuron:
                     await self.load_automation(module_path)
                 except Exception:
                     LOG.exception("Failed to load automation: %s", module_path.name)
+                    # TODO: Record the error on the automation object and
+                    # include it in the payload to the integration
 
     async def reload_automations(self, module_paths: list[str]):
         """Reloads the given automation module paths"""
@@ -443,11 +450,12 @@ class Neuron:
             await self.subscribe(automation, handler, to=event)
 
         if automation.entities:
-            await self.subscribe(
-                automation,
-                automation.subscribe_entities_handler,
-                to=list(automation.entities.values()),
-            )
+            for entity in automation.entities.values():
+                await self.subscribe(
+                    automation,
+                    automation.subscribe_entities_handler,
+                    to=[entity],
+                )
 
     async def remove_automation_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:
@@ -548,6 +556,14 @@ class Neuron:
 
         subscription.add_handler(automation, handler)
         self.subscriptions.add(subscription)
+
+        # FIXME: Reusing entity state subscription doesn't work, since we rely
+        # on the initial state being sent by Home Assistant right after we
+        # subscribe. If we reuse an existing subscription, we don't get that
+        # initial state. This is a disgusting dirty hack and should be replaced
+        # with a proper design ASAP:
+        if subscription.last_message is not None:
+            await self.dispatch_event(subscription.last_message)
 
     async def unsubscribe(self, handler: Callable, event_or_trigger: str | dict):
         """Unsubscribes a handler from an event or trigger"""
@@ -753,6 +769,8 @@ class Subscription:
     event: str | None = None  # Provide if event subscription
     trigger: dict | None = None  # Provide if trigger subscription
     entities: list[Entity] | None = None  # Provide if entities subscription
+
+    last_message: Any | None = None  # FIXME: Quick dirty fix, delete ASAP
 
     _handlers: dict[Automation | NEURON_CORE, list[Callable]] = field(
         default_factory=dict

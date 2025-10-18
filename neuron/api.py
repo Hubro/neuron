@@ -197,6 +197,8 @@ def on_event(event: str = "*", **filter: Any):
             await bedroom_lights.turn_off()
     """
 
+    # TODO: Allow dynamic invocation, as with on_trigger
+
     def decorator(handler: AsyncFunction):
         @wraps(handler)
         async def wrapper(handler_kwargs, *args, **kwargs):
