@@ -9,6 +9,7 @@ from pathlib import Path
 
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
 DATA_DIR = os.environ.get("NEURON_DATA_DIR", "/config")
+DEV = bool(os.environ.get("NEURON_DEV", ""))
 HASS_WEBSOCKET_URI = os.environ.get(
     "HASS_WEBSOCKET_URI", "ws://supervisor/core/websocket"
 )

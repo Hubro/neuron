@@ -2,6 +2,7 @@
 # Caches, build output etc.
 __pycache__/
 *.log
+persistent-state.json
 
 # My own stuff
 /justfile

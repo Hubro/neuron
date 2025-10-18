@@ -5,11 +5,10 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import (
-    DeviceInfo,
-)
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import bus
 from .const import DOMAIN
 from .types import NeuronIntegrationData
 
@@ -28,25 +27,12 @@ async def async_setup_entry(
     data: NeuronIntegrationData = hass.data[DOMAIN]
     data.add_switch_entities = async_add_entities
 
-    async_add_entities(
-        [
-            NeuronSwitch(
-                hass,
-                automation=None,
-                name="neuron_enabled",
-                friendly_name="Neuron enabled",
-            )
-        ]
-    )
 
-
-class NeuronSwitch(SwitchEntity):
+class AutomationEnabledSwitch(SwitchEntity):
     def __init__(
         self,
         hass: HomeAssistant,
-        automation: str | None,
-        name: str,
-        friendly_name: str | None = None,
+        automation: bus.Automation,
     ) -> None:
         self.hass = hass
         self.automation = automation
@@ -54,71 +40,57 @@ class NeuronSwitch(SwitchEntity):
         # Generic properties: https://developers.home-assistant.io/docs/core/entity#generic-properties
         self.should_poll = False
 
-        if automation:
-            self.entity_id = f"switch.neuron_{automation}_{name}"
-            self.name = (
-                friendly_name
-                or f"Neuron - {make_friendly(automation)} - {make_friendly(name)}"
-            )
-        else:
-            self.entity_id = f"switch.neuron_core_{name}"
-            self.name = friendly_name or f"Neuron - {make_friendly(name)}"
-
-        self._attr_is_on = True
+        self.entity_id = f"switch.neuron_{automation.name}_enabled"
+        self.name = f"Neuron - {make_friendly(automation.name)} - Enabled"
+        self._attr_is_on = automation.enabled
 
     #
     # Registry properties: https://developers.home-assistant.io/docs/core/entity#registry-properties
     #
 
     @cached_property
-    def is_on(self) -> bool | None:
-        return self._attr_is_on
-
-    @cached_property
     def unique_id(self):
         if self.automation:
-            return f"neuron_sensor_{self.automation}_{self.name}"
+            return f"neuron_sensor_{self.automation.name}_{self.name}"
         else:
             return f"neuron_sensor_{self.name}"
 
     @cached_property
     def device_info(self):
-        if self.automation:
-            return DeviceInfo(
-                connections={(DOMAIN, f"neuron_{self.automation}")},
-                default_name=f"Neuron automation: {self.automation}",
-                default_manufacturer="Neuron",
-                default_model="Automation",
-                via_device=(DOMAIN, "neuron"),
-            )
+        return DeviceInfo(
+            connections={(DOMAIN, f"neuron_{self.automation.name}")},
+            default_name=f"Neuron automation: {self.automation.name}",
+            default_manufacturer="Neuron",
+            default_model="Automation",
+            via_device=(DOMAIN, "neuron"),
+        )
 
-        else:
-            return DeviceInfo(
-                configuration_url=None,
-                connections=set(),
-                entry_type=None,
-                hw_version=None,
-                identifiers={(DOMAIN, "neuron")},
-                manufacturer=None,
-                model=None,
-                name="Neuron",
-                suggested_area=None,
-                sw_version=None,
-                via_device=None,  # type: ignore
-            )
-
-    def turn_on(self, **kwargs: Any) -> None:
-        LOG.info("Turning switch on")
-        self._attr_is_on = True
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        LOG.info("Enabling automation %r", self.automation.name)
+        self.is_on = True
         self.schedule_update_ha_state()
 
-    def turn_off(self, **kwargs: Any) -> None:
-        LOG.info("Turning switch off")
-        self._attr_is_on = False
+        self.hass.bus.async_fire(
+            "neuron",
+            bus.UpdateAutomation(
+                automation=self.automation.module_name, enabled=True
+            ).model_dump(),
+        )
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        LOG.info("Disabling automation %r", self.automation.name)
+        self.is_on = False
         self.schedule_update_ha_state()
+
+        self.hass.bus.async_fire(
+            "neuron",
+            bus.UpdateAutomation(
+                automation=self.automation.module_name, enabled=False
+            ).model_dump(),
+        )
 
     async def async_update(self):
-        LOG.info("Updating switch %r", self)
+        LOG.info("Updating 'automation enabled' switch %r", self)
 
 
 def make_friendly(str) -> str:

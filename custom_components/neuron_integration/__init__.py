@@ -5,11 +5,12 @@ from typing import assert_never
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 
 from . import bus
 from .const import DOMAIN
 from .sensor import NeuronSensor
-from .switch import NeuronSwitch
+from .switch import AutomationEnabledSwitch
 from .util import neuron_data
 
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
@@ -20,6 +21,22 @@ LOG = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
     # config={'created_at': '2025-10-01T22:22:48.588577+00:00', 'data': {'addon': 'Neuron'}, 'discovery_keys': {'hassio': (DiscoveryKey(domain='hassio', key='be7bc7f728b3492b90e10cb61d2ecbe4', version=1),)}, 'disabled_by': None, 'domain': 'neuron', 'entry_id': '01K6GXXY8C4FQAPFTEVPN6NK27', 'minor_version': 0, 'modified_at': '2025-10-01T22:22:48.588591+00:00', 'options': {}, 'pref_disable_new_entities': False, 'pref_disable_polling': False, 'source': 'hassio', 'subentries': [], 'title': 'Neuron', 'unique_id': 'neuron', 'version': 0}
     LOG.info("Setting up Neuron integration")
+
+    device_registry = async_get_device_registry(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=config.entry_id,
+        configuration_url=None,
+        connections=set(),
+        entry_type=None,
+        hw_version=None,
+        identifiers={(DOMAIN, "neuron")},
+        manufacturer=None,
+        model=None,
+        name="Neuron",
+        suggested_area=None,
+        sw_version=None,
+        via_device=None,  # type: ignore
+    )
 
     data = neuron_data(hass)
     data.cleanup_event_listener = hass.bus.async_listen(
@@ -84,12 +101,14 @@ async def _handle_event(hass: HomeAssistant, event: Event):
         return
 
     match message:
-        case bus.RequestingFullUpdate():
-            pass  # We sent this message
+        case bus.NeuronIntegrationMessage():
+            pass  # Ignore our own messages
+
         case bus.FullUpdate():
             LOG.info("Received full state update from Neuron: %r", message)
             data = neuron_data(hass)
             data.full_update = message
+
         case other:
             assert_never(other)
 
@@ -103,7 +122,7 @@ def create_entities(hass: HomeAssistant):
     for automation in data.full_update.automations:
         data.add_switch_entities(
             [
-                NeuronSwitch(hass, automation.name, "enabled"),
+                AutomationEnabledSwitch(hass, automation),
             ]
         )
 

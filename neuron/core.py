@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, overload
+from typing import Any, Callable, Iterator, assert_never, overload
 
 from typing_extensions import Sentinel
 
@@ -20,6 +20,7 @@ from .api import Entity, StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .logging import NeuronLogger, get_logger
+from .state import AutomationState, NeuronState
 from .util import (
     filter_keyword_args,
     stringify,
@@ -42,6 +43,7 @@ class Neuron:
     packages: list[Path]  # Packages we've loaded automations from
     tasks: list[asyncio.Task]
     subscriptions: Subscriptions
+    state: NeuronState
 
     _stop: asyncio.Event
 
@@ -56,6 +58,8 @@ class Neuron:
 
     async def start(self):
         LOG.info("Starting Neuron!")
+
+        self.state = NeuronState.load()
 
         await self.load_packages()
         await self.hass.connect()
@@ -211,10 +215,6 @@ class Neuron:
 
             handler_name = handler.__name__
             handler_is_event_wrapper = getattr(handler, "_event_handler_wrapper", False)
-            handler_is_internal = (
-                getattr(handler, "__func__", None)
-                is Automation.subscribe_entities_handler
-            ) or handler_is_event_wrapper
 
             try:
                 kwargs = filter_keyword_args(handler, handler_kwargs)
@@ -224,9 +224,8 @@ class Neuron:
                 if handler_is_event_wrapper:
                     kwargs["handler_kwargs"] = handler_kwargs
 
-                if not handler_is_internal:
-                    logger.debug("Executing handler: %s", handler_name)
-                    logger.trace("Handler arguments: %r", handler_kwargs)
+                logger.debug("Executing handler: %s", handler_name)
+                logger.trace("Handler arguments: %r", handler_kwargs)
 
                 if automation is NEURON_CORE:
                     await handler(**kwargs)
@@ -316,6 +315,14 @@ class Neuron:
         assert automation.module_name not in self.automations
         self.automations[automation.module_name] = automation
 
+        automation_state = self.state.automations.setdefault(
+            automation.module_name,
+            AutomationState(),
+        )
+        LOG.debug("Automation persistent state: %r", automation_state)
+
+        automation.enabled = automation_state.enabled
+
         automation.load(reload=reload)
 
         # No point in proceeding if loading the module failed. An error has
@@ -323,9 +330,29 @@ class Neuron:
         if not automation.module:
             return
 
+        if automation.enabled:
+            await self.init_automation(automation)
+
+            LOG.info("Automation loaded and initialized successfully")
+
+        else:
+            LOG.info("Automation loaded but is disabled")
+
+    async def init_automation(self, automation: Automation):
+        """Initializes an automation"""
+
+        assert automation.loaded
+        assert automation.module is not None
+
+        if automation.initialized:
+            LOG.warning("Automation is already initialized: %r", automation)
+            return
+
         LOG.debug("Establishing subscriptions")
-        establish_subscriptions = self.establish_subscriptions(automation)
-        await asyncio.wait_for(establish_subscriptions, timeout=10.0)
+        await asyncio.wait_for(
+            self.establish_automation_subscriptions(automation),
+            timeout=10.0,
+        )
 
         LOG.debug("Awaiting initial entity states before proceeding")
         for entity in automation.entities.values():
@@ -352,9 +379,56 @@ class Neuron:
                     LOG.debug("Awaiting coroutine returned by init function")
                     await result
 
-        LOG.info("Automation loaded and initialized successfully")
+        automation.initialized = True
 
-    async def establish_subscriptions(self, automation: Automation):
+    async def enable_automation(self, automation: Automation):
+        """Enables a disabled automation
+
+        The automation must be loaded but not initialized.
+        """
+
+        if automation.enabled:
+            LOG.warning("Automation is already enabled: %r", automation.name)
+            return
+
+        LOG.info("Enabling automation %r", automation.name)
+
+        assert automation.loaded
+        assert not automation.initialized
+
+        automation.enabled = True
+        await self.init_automation(automation)
+
+        automation_state = self.state.automations[automation.module_name]
+        automation_state.enabled = True
+        self.state.save()
+
+    async def disable_automation(self, automation: Automation):
+        """Disables an automation
+
+        This removes all the automation's subscriptions and resets the
+        "initialized" flag. The automation remains loaded and in the automation
+        list.
+        """
+
+        if not automation.enabled:
+            LOG.warning("Automation is already disabled: %r", automation.name)
+            return
+
+        LOG.info("Disabling automation %r", automation.name)
+
+        await self.remove_automation_subscriptions(automation)
+        automation.enabled = False
+        automation.initialized = False
+
+        for entity in automation.entities.values():
+            entity.initialized.clear()
+
+        automation_state = self.state.automations[automation.module_name]
+        automation_state.enabled = False
+        self.state.save()
+
+    async def establish_automation_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:
             LOG.error(
                 "Subscriptions already established for automation %r",
@@ -375,6 +449,12 @@ class Neuron:
                 to=list(automation.entities.values()),
             )
 
+    async def remove_automation_subscriptions(self, automation: Automation):
+        if automation in self.subscriptions:
+            del self.subscriptions[automation]
+
+        await self.prune_subscriptions()
+
     async def reestablish_subscriptions(self):
         """Re-establishes all subscriptions after reconnecting to Home Assistant
 
@@ -389,7 +469,7 @@ class Neuron:
         self.subscriptions = Subscriptions()
 
         for old_subscription in old_subscriptions:
-            for handler in old_subscription[NEURON_CORE]:
+            for handler in old_subscription.get(NEURON_CORE, []):
                 await self.subscribe(NEURON_CORE, handler, to=old_subscription.key)
 
             for automation in old_subscription.automations:
@@ -407,7 +487,10 @@ class Neuron:
             LOG.exception("Failed to parse Neuron integration message")
             return
 
-        LOG.trace("Got message from Neuron companion integration: %r", message)
+        if isinstance(message, neuron.bus.NeuronCoreMessage):
+            return  # Ignore our own messages
+
+        LOG.info("Got message from Neuron companion integration: %r", message)
 
         match message:
             case neuron.bus.RequestingFullUpdate():
@@ -415,7 +498,8 @@ class Neuron:
                     automations=[
                         neuron.bus.Automation(
                             name=automation.name,
-                            enabled=True,
+                            module_name=automation.module_name,
+                            enabled=automation.enabled,
                             trigger_subscriptions=len(automation.trigger_handlers),
                             event_subscriptions=len(automation.event_handlers),
                             state_subscriptions=len(automation.entities),
@@ -426,8 +510,16 @@ class Neuron:
 
                 LOG.info("Sending full update to Neuron integration | %r", payload)
                 await self.hass.fire_event("neuron", data=payload.model_dump())
-            case neuron.bus.FullUpdate():
-                pass  # We sent this message
+
+            case neuron.bus.UpdateAutomation():
+                automation = self.automations[message.automation]
+
+                if message.enabled is not None:
+                    if message.enabled:
+                        await self.enable_automation(automation)
+                    else:
+                        await self.disable_automation(automation)
+
             case other:
                 assert_never(other)
 
@@ -468,13 +560,11 @@ class Neuron:
     async def eject_automation(self, automation: Automation):
         LOG.info("Ejecting automation: %s", automation.module_name)
 
-        subscriptions = self.subscriptions.get(automation, [])
+        assert automation.loaded
 
-        for subscription in subscriptions:
-            if automation in subscription:
-                del subscription[automation]
-
-        await self.prune_subscriptions()
+        if automation.enabled:
+            assert automation.initialized
+            await self.remove_automation_subscriptions(automation)
 
         del self.automations[automation.module_name]
 
@@ -641,6 +731,13 @@ class Subscriptions:
             del self._subscriptions[subscription.id]
             del self._reverse_map[subscription.key]
 
+            for automation, automation_subs in list(self._automation_map.items()):
+                if subscription in automation_subs:
+                    automation_subs.remove(subscription)
+
+                if not automation_subs:
+                    del self._automation_map[automation]
+
     def add(self, subscription: Subscription):
         self._subscriptions[subscription.id] = subscription
         self._reverse_map[subscription.key] = subscription
@@ -726,6 +823,24 @@ class Subscription:
                     if not handlers:
                         del self[automation]
 
+    @overload
+    def get[T](self, automation: Automation, default: T = None) -> list[Callable] | T:
+        """Returns all the handlers for this subscription from the given automation"""
+        ...
+
+    @overload
+    def get[T](self, automation: NEURON_CORE, default: T = None) -> list[Callable] | T:
+        """Returns all Neuron internal handlers for this subscription"""
+        ...
+
+    def get[T](
+        self, automation: Automation | NEURON_CORE, default: T = None
+    ) -> list[Callable] | T:
+        try:
+            return self._handlers[automation]
+        except KeyError:
+            return default
+
     @property
     def key(self) -> str:
         if self.event:
@@ -776,17 +891,21 @@ class Automation:
     module: ModuleType | None
     module_path: Path
     loaded: bool
+    initialized: bool
+    enabled: bool
     logger: NeuronLogger
     trigger_handlers: list[tuple[dict, Callable]]
     event_handlers: list[tuple[str, Callable]]
     entities: dict[str, Entity]
 
-    def __init__(self, module_path: Path):
+    def __init__(self, module_path: Path, enabled: bool = True):
         package_path = module_path.parent.parent
         self.module_name = f"{package_path.name}.automations.{module_path.stem}"
         self.module = None
         self.module_path = module_path
         self.loaded = False
+        self.initialized = False
+        self.enabled = enabled
         self.logger = get_logger(self.module_name)
         self.trigger_handlers = []
         self.event_handlers = []
@@ -842,10 +961,14 @@ class Automation:
         finally:
             neuron.api._logger.set(restore)
 
-    async def subscribe_entities_handler(self, entity_states: dict[str, Any]):
+    async def subscribe_entities_handler(self, entity_states: dict[str, Any] | None):
+        entity_states = entity_states or {}
+
         for entity_id, state_object in entity_states.items():
             if entity_id not in self.entities:
-                LOG.error(f"Got unexpected entity state update for {entity_id!r}")
+                self.logger.error(
+                    f"Got unexpected entity state update for {entity_id!r}"
+                )
                 continue
 
             entity = self.entities[entity_id]
@@ -859,9 +982,9 @@ class Automation:
                 if "a" in diff:
                     entity._attributes.update(diff["a"])
 
-                LOG.debug("Updated entity state: %r", entity)
+                self.logger.trace("Updated entity state: %r", entity)
             else:
                 entity._state = state_object["s"]
                 entity._attributes = state_object["a"]
                 entity.initialized.set()
-                LOG.debug("Set initial entity state: %r", entity)
+                self.logger.trace("Set initial entity state: %r", entity)
