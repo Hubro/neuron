@@ -562,8 +562,7 @@ class Neuron:
 
         assert automation.loaded
 
-        if automation.enabled:
-            assert automation.initialized
+        if automation.initialized:
             await self.remove_automation_subscriptions(automation)
 
         del self.automations[automation.module_name]
