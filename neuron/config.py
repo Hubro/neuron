@@ -10,6 +10,7 @@ from pathlib import Path
 CONFIG_PATH = os.environ.get("NEURON_CONFIG_PATH", "/data/options.json")
 DATA_DIR = os.environ.get("NEURON_DATA_DIR", "/config")
 DEV = bool(os.environ.get("NEURON_DEV", ""))
+AUTOMATION_PACKAGES = os.environ.get("NEURON_AUTOMATION_PACKAGES", None)
 HASS_WEBSOCKET_URI = os.environ.get(
     "HASS_WEBSOCKET_URI", "ws://supervisor/core/websocket"
 )
@@ -33,11 +34,19 @@ class Config:
 def load_config():
     with open(CONFIG_PATH) as f:
         raw_config = json.load(f)
-        LOG.info("Loaded config: %r", raw_config)
+        LOG.debug("Loaded JSON config: %r", raw_config)
 
-    return Config(
-        packages=raw_config["packages"],
+    if AUTOMATION_PACKAGES:
+        packages = AUTOMATION_PACKAGES.split(",")
+    else:
+        packages = raw_config["packages"]
+
+    config = Config(
+        packages=packages,
         data_dir=Path(DATA_DIR),
         hass_websocket_uri=HASS_WEBSOCKET_URI,
         hass_api_token=HASS_API_TOKEN,
     )
+    LOG.info("Loaded config: %r", config)
+
+    return config
