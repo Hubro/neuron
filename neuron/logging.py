@@ -26,7 +26,12 @@ def setup_dev_logging():
         level="TRACE",
         handlers=[handler],
     )
-    logging.getLogger("websockets.client").setLevel(logging.INFO)
+
+    if os.environ.get("WS_VERBOSE"):
+        logging.getLogger("websockets.client").setLevel(logging.DEBUG)
+    else:
+        logging.getLogger("websockets.client").setLevel(logging.INFO)
+
     logging.getLogger("watchdog").setLevel(logging.INFO)
 
     setup_file_logging()

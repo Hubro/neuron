@@ -228,9 +228,14 @@ class Neuron:
                 # full kwargs dict so it can be used for filtering
                 if handler_is_event_wrapper:
                     kwargs["handler_kwargs"] = handler_kwargs
+                    logger.trace(
+                        "Executing event handler wrapper for: %s", handler_name
+                    )
+                    logger.trace("Handler arguments: %r", handler_kwargs)
 
-                logger.debug("Executing handler: %s", handler_name)
-                logger.trace("Handler arguments: %r", handler_kwargs)
+                else:
+                    logger.debug("Executing handler: %s", handler_name)
+                    logger.trace("Handler arguments: %r", handler_kwargs)
 
                 if automation is NEURON_CORE:
                     await handler(**kwargs)
@@ -279,6 +284,10 @@ class Neuron:
                     LOG.exception("Failed to load automation: %s", module_path.name)
                     # TODO: Record the error on the automation object and
                     # include it in the payload to the integration
+
+        # Flush persistent state to disc after all packages are loaded, so any
+        # new automations show up there
+        self.state.save()
 
     async def reload_automations(self, module_paths: list[str]):
         """Reloads the given automation module paths"""
@@ -340,7 +349,8 @@ class Neuron:
         if automation.enabled:
             await self.init_automation(automation)
 
-            LOG.info("Automation loaded and initialized successfully")
+            if automation.initialized:
+                LOG.info("Automation loaded and initialized successfully")
 
         else:
             LOG.info("Automation loaded but is disabled")
@@ -367,10 +377,10 @@ class Neuron:
                 async with asyncio.timeout(3.0):
                     await entity.initialized.wait()
             except asyncio.TimeoutError:
-                LOG.error(
+                automation.logger.error(
                     f"Timed out waiting for the initial state of {entity.entity_id!r}, perhaps it doesn't exist?"
                 )
-                await self.eject_automation(automation)
+                await self.remove_automation_subscriptions(automation)
                 return
 
         if hasattr(automation.module, "init"):
@@ -380,11 +390,15 @@ class Neuron:
             )
 
             with automation.api_context():
-                result = automation.module.init(**kwargs)
+                try:
+                    result = automation.module.init(**kwargs)
 
-                if asyncio.iscoroutine(result):
-                    LOG.debug("Awaiting coroutine returned by init function")
-                    await result
+                    if asyncio.iscoroutine(result):
+                        LOG.debug("Awaiting coroutine returned by init function")
+                        await result
+                except Exception:
+                    LOG.exception("The init function raised an exception")
+                    return
 
         automation.initialized = True
 
@@ -405,6 +419,9 @@ class Neuron:
 
         automation.enabled = True
         await self.init_automation(automation)
+
+        if not automation.initialized:
+            LOG.error("Failed to initialize automation %r", automation.name)
 
         automation_state = self.state.automations[automation.module_name]
         automation_state.enabled = True
