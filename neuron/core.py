@@ -495,11 +495,13 @@ class Neuron:
 
         for old_subscription in old_subscriptions:
             for handler in old_subscription.get(NEURON_CORE, []):
-                await self.subscribe(NEURON_CORE, handler, to=old_subscription.key)
+                await self.subscribe(NEURON_CORE, handler, to=old_subscription.subject)
 
             for automation in old_subscription.automations:
                 for handler in old_subscription[automation]:
-                    await self.subscribe(automation, handler, to=old_subscription.key)
+                    await self.subscribe(
+                        automation, handler, to=old_subscription.subject
+                    )
 
     async def integration_message_handler(self, event_type: str, event: dict[str, Any]):
         """Event handler for messages from the Neuron integration"""
@@ -883,6 +885,17 @@ class Subscription:
             return stringify(self.trigger)
         elif self.entities:
             return stringify([x.entity_id for x in self.entities])
+        else:
+            raise RuntimeError()
+
+    @property
+    def subject(self) -> str | dict | list[Entity]:
+        if self.event:
+            return self.event
+        elif self.trigger:
+            return self.trigger
+        elif self.entities:
+            return self.entities
         else:
             raise RuntimeError()
 
