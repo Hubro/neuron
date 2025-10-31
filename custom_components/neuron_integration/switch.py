@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import bus
 from .const import DOMAIN
-from .types import NeuronIntegrationData
+from .util import neuron_data
 
 LOG = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ async def async_setup_entry(
 
     LOG.info("Setting up Neuron switch platform")
 
-    data: NeuronIntegrationData = hass.data[DOMAIN]
+    data = neuron_data(hass)
     data.add_switch_entities = async_add_entities
 
 
@@ -41,7 +41,7 @@ class AutomationEnabledSwitch(SwitchEntity):
         self.should_poll = False
 
         self.entity_id = f"switch.neuron_{automation.name}_enabled"
-        self.name = f"Neuron - {make_friendly(automation.name)} - Enabled"
+        self.name = "Enabled"
         self._attr_is_on = automation.enabled
 
     #
@@ -91,7 +91,3 @@ class AutomationEnabledSwitch(SwitchEntity):
 
     async def async_update(self):
         LOG.info("Updating 'automation enabled' switch %r", self)
-
-
-def make_friendly(str) -> str:
-    return str.replace("_", " ").capitalize()

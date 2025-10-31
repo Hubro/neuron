@@ -521,7 +521,20 @@ class Neuron:
 
         match message:
             case neuron.bus.RequestingFullUpdate():
+                total_trigger_subscriptions = sum(
+                    1 for sub in self.subscriptions if sub.trigger
+                )
+                total_event_subscriptions = sum(
+                    1 for sub in self.subscriptions if sub.event
+                )
+                total_state_subscriptions = sum(
+                    1 for sub in self.subscriptions if sub.entities
+                )
+
                 payload = neuron.bus.FullUpdate(
+                    trigger_subscriptions=total_trigger_subscriptions,
+                    event_subscriptions=total_event_subscriptions,
+                    state_subscriptions=total_state_subscriptions,
                     automations=[
                         neuron.bus.Automation(
                             name=automation.name,
@@ -532,7 +545,7 @@ class Neuron:
                             state_subscriptions=len(automation.entities),
                         )
                         for automation in self.automations.values()
-                    ]
+                    ],
                 )
 
                 LOG.info("Sending full update to Neuron integration | %r", payload)

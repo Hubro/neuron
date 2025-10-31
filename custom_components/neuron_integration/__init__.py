@@ -5,11 +5,10 @@ from typing import assert_never
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 
 from . import bus
 from .const import DOMAIN
-from .sensor import NeuronSensor
+from .sensor import NeuronSensor, NeuronStatsSensor
 from .switch import AutomationEnabledSwitch
 from .util import neuron_data
 
@@ -22,21 +21,24 @@ async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
     # config={'created_at': '2025-10-01T22:22:48.588577+00:00', 'data': {'addon': 'Neuron'}, 'discovery_keys': {'hassio': (DiscoveryKey(domain='hassio', key='be7bc7f728b3492b90e10cb61d2ecbe4', version=1),)}, 'disabled_by': None, 'domain': 'neuron', 'entry_id': '01K6GXXY8C4FQAPFTEVPN6NK27', 'minor_version': 0, 'modified_at': '2025-10-01T22:22:48.588591+00:00', 'options': {}, 'pref_disable_new_entities': False, 'pref_disable_polling': False, 'source': 'hassio', 'subentries': [], 'title': 'Neuron', 'unique_id': 'neuron', 'version': 0}
     LOG.info("Setting up Neuron integration")
 
-    device_registry = async_get_device_registry(hass)
-    device_registry.async_get_or_create(
-        config_entry_id=config.entry_id,
-        configuration_url=None,
-        connections=set(),
-        entry_type=None,
-        hw_version=None,
-        identifiers={(DOMAIN, "neuron")},
-        manufacturer=None,
-        model=None,
-        name="Neuron",
-        suggested_area=None,
-        sw_version=None,
-        via_device=None,  # type: ignore
-    )
+    await hass.config_entries.async_forward_entry_setups(config, ["switch"])
+    await hass.config_entries.async_forward_entry_setups(config, ["sensor"])
+
+    # device_registry = async_get_device_registry(hass)
+    # device_registry.async_get_or_create(
+    #     config_entry_id=config.entry_id,
+    #     configuration_url=None,
+    #     connections=set(),
+    #     entry_type=None,
+    #     hw_version=None,
+    #     identifiers={(DOMAIN, "neuron")},
+    #     manufacturer=None,
+    #     model="Neuron core",
+    #     name="Neuron",
+    #     suggested_area=None,
+    #     sw_version=None,
+    #     via_device=None,  # type: ignore
+    # )
 
     data = neuron_data(hass)
     data.cleanup_event_listener = hass.bus.async_listen(
@@ -46,11 +48,6 @@ async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
 
     # Get a full state update from Neuron before proceeding
     await _solicit_full_update(hass)
-
-    await hass.config_entries.async_forward_entry_setups(config, ["switch"])
-    await hass.config_entries.async_forward_entry_setups(config, ["sensor"])
-
-    create_entities(hass)
 
     return True
 
@@ -78,7 +75,7 @@ async def _solicit_full_update(hass):
 
         await asyncio.sleep(5)
 
-        if not data.full_update:
+        if not data.entities_created:
             LOG.warning("No response from Neuron! Trying again.")
             asyncio.create_task(pester_neutron(), name="pester-neutron-for-update")
 
@@ -87,7 +84,7 @@ async def _solicit_full_update(hass):
     while True:
         await asyncio.sleep(0.25)
 
-        if data.full_update:
+        if data.entities_created:
             return
 
 
@@ -100,26 +97,51 @@ async def _handle_event(hass: HomeAssistant, event: Event):
         LOG.exception("Failed to parse message from Neuron")
         return
 
-    match message:
-        case bus.NeuronIntegrationMessage():
-            pass  # Ignore our own messages
+    if isinstance(message, bus.NeuronIntegrationMessage):
+        return  # Ignore our own messages
 
+    match message:
         case bus.FullUpdate():
             LOG.info("Received full state update from Neuron: %r", message)
-            data = neuron_data(hass)
-            data.full_update = message
+            create_entities(hass, message)
+
+        case bus.StatsUpdate():
+            LOG.info("Received stats update from Neuron: %r", message)
+            # Entities handle this update directly
+
+        case bus.AutomationUpdate():
+            LOG.info("Received automation update from Neuron: %r", message)
+            # Entities handle this update directly
 
         case other:
             assert_never(other)
 
 
-def create_entities(hass: HomeAssistant):
+def create_entities(hass: HomeAssistant, message: bus.FullUpdate):
     data = neuron_data(hass)
     assert data.add_switch_entities
     assert data.add_sensor_entities
-    assert data.full_update
 
-    for automation in data.full_update.automations:
+    # FIXME: If anything doesn't match the existing entity, "add_*_entities"
+    # will just create a new entity with "_2" appended. In other words, check
+    # if the entities exist already somehow, or destroy all entities in the
+    # neuron domain before starting.
+
+    data.add_sensor_entities(
+        [
+            NeuronStatsSensor(
+                hass, stat="trigger_subscriptions", state=message.trigger_subscriptions
+            ),
+            NeuronStatsSensor(
+                hass, stat="event_subscriptions", state=message.event_subscriptions
+            ),
+            NeuronStatsSensor(
+                hass, stat="state_subscriptions", state=message.state_subscriptions
+            ),
+        ]
+    )
+
+    for automation in message.automations:
         data.add_switch_entities(
             [
                 AutomationEnabledSwitch(hass, automation),
@@ -148,3 +170,5 @@ def create_entities(hass: HomeAssistant):
                 ),
             ]
         )
+
+    data.entities_created = True

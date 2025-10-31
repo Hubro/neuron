@@ -1,18 +1,19 @@
 import logging
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.device_registry import (
     DeviceInfo,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import bus
 from .const import DOMAIN
-from .types import NeuronIntegrationData
+from .util import neuron_data
 
 LOG = logging.getLogger(__name__)
 
@@ -26,8 +27,82 @@ async def async_setup_entry(
 
     LOG.info("Setting up Neuron sensor platform")
 
-    data: NeuronIntegrationData = hass.data[DOMAIN]
+    data = neuron_data(hass)
     data.add_sensor_entities = async_add_entities
+
+
+class NeuronStatsSensor(SensorEntity):
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        stat: Literal[
+            "trigger_subscriptions", "event_subscriptions", "state_subscriptions"
+        ],
+        state: Any | None = None,
+    ) -> None:
+        self.hass = hass
+        self.stat = stat
+        self.stop_event_listener = None
+
+        # Generic properties: https://developers.home-assistant.io/docs/core/entity#generic-properties
+        self.should_poll = False
+        self.entity_category = EntityCategory.DIAGNOSTIC
+
+        self.entity_id = f"sensor.neuron_core_stats_{stat}"
+        self.name = f"Neuron {make_friendly(stat)}"
+
+        self._attr_available = state is not None
+        self._attr_native_value = state
+
+    async def async_added_to_hass(self) -> None:
+        self.stop_event_listener = self.hass.bus.async_listen(
+            "neuron", self.event_listener
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self.stop_event_listener:
+            self.stop_event_listener()
+
+    async def event_listener(self, event: Event):
+        try:
+            message = bus.parse_message(event.data)
+        except Exception:
+            LOG.exception("Failed to parse message from Neuron")
+            return
+
+        if isinstance(message, (bus.StatsUpdate, bus.FullUpdate)):
+            stat = getattr(message, self.stat)
+
+            if stat != self._attr_native_value:
+                self._attr_native_value = stat
+                self.schedule_update_ha_state()
+
+    #
+    # Registry properties: https://developers.home-assistant.io/docs/core/entity#registry-properties
+    #
+
+    @cached_property
+    def unique_id(self):
+        return f"sensor.neuron_core_stats_{self.stat}"
+
+    @cached_property
+    def device_info(self):
+        return DeviceInfo(
+            configuration_url=None,
+            connections=set(),
+            entry_type=None,
+            hw_version=None,
+            identifiers={(DOMAIN, "neuron")},
+            manufacturer=None,
+            model="Neuron core",
+            name="Neuron",
+            suggested_area=None,
+            sw_version=None,
+            via_device=None,  # type: ignore
+        )
+
+    async def async_update(self):
+        LOG.info("Updating neuron stats sensor %r", self)
 
 
 class NeuronSensor(SensorEntity):
@@ -48,13 +123,10 @@ class NeuronSensor(SensorEntity):
 
         if automation:
             self.entity_id = f"sensor.neuron_{automation}_{name}"
-            self.name = (
-                friendly_name
-                or f"Neuron - {make_friendly(automation)} - {make_friendly(name)}"
-            )
         else:
             self.entity_id = f"sensor.neuron_core_{name}"
-            self.name = friendly_name or f"Neuron - {make_friendly(name)}"
+
+        self.name = friendly_name or make_friendly(name)
 
         if state is None:
             self._attr_available = False

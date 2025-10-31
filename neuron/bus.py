@@ -50,7 +50,17 @@ class UpdateAutomation(NeuronIntegrationMessage):
 
 class FullUpdate(NeuronCoreMessage):
     type: Literal["full-update"] = "full-update"
+    trigger_subscriptions: int
+    event_subscriptions: int
+    state_subscriptions: int
     automations: list[Automation]
+
+
+class StatsUpdate(NeuronCoreMessage):
+    type: Literal["stats-update"] = "stats-update"
+    trigger_subscriptions: int
+    event_subscriptions: int
+    state_subscriptions: int
 
 
 class Automation(BaseModel):
@@ -62,12 +72,22 @@ class Automation(BaseModel):
     state_subscriptions: int
 
 
+class AutomationUpdate(NeuronCoreMessage, Automation):
+    type: Literal["automation-update"] = "automation-update"
+
+
 #
 # /
 #
 
 
-Message = RequestingFullUpdate | UpdateAutomation | FullUpdate
+Message = (
+    RequestingFullUpdate
+    | UpdateAutomation
+    | FullUpdate
+    | StatsUpdate
+    | AutomationUpdate
+)
 
 
 def parse_message(msg: Mapping[str, Any]) -> Message:
