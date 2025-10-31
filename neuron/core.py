@@ -325,7 +325,7 @@ class Neuron:
                 # Module was modified
                 LOG.info("Reloading modified automation: %s", automation.module_name)
                 await self.eject_automation(automation)
-                await self.load_automation(module_path, reload=True)
+                await self.load_automation(module_path)
             else:
                 # Module was added
                 LOG.info(
@@ -334,7 +334,7 @@ class Neuron:
                 )
                 await self.load_automation(module_path)
 
-    async def load_automation(self, module_path: Path, reload=False):
+    async def load_automation(self, module_path: Path):
         """Loads an automation from a module path"""
 
         automation = Automation(module_path)
@@ -350,8 +350,7 @@ class Neuron:
         LOG.debug("Automation persistent state: %r", automation_state)
 
         automation.enabled = automation_state.enabled
-
-        automation.load(reload=reload)
+        automation.load()
 
         # No point in proceeding if loading the module failed. An error has
         # already been logged.
@@ -378,10 +377,17 @@ class Neuron:
             return
 
         LOG.debug("Establishing subscriptions")
-        await asyncio.wait_for(
-            self.establish_automation_subscriptions(automation),
-            timeout=10.0,
-        )
+        try:
+            await asyncio.wait_for(
+                self.establish_automation_subscriptions(automation),
+                timeout=10.0,
+            )
+        except Exception:
+            LOG.exception(
+                "Exception raised while establishing subscriptions for %r", automation
+            )
+            await self.remove_automation_subscriptions(automation)
+            return
 
         LOG.debug("Awaiting initial entity states before proceeding")
         for entity in automation.entities.values():
@@ -410,6 +416,7 @@ class Neuron:
                         await result
                 except Exception:
                     LOG.exception("The init function raised an exception")
+                    await self.remove_automation_subscriptions(automation)
                     return
 
         automation.initialized = True
@@ -1027,20 +1034,17 @@ class Automation:
     def name(self) -> str:
         return self.module_name.split(".")[-1]
 
-    def load(self, reload=False):
+    def load(self):
         assert not self.loaded
         assert not neuron.api._trigger_handlers
+        assert not neuron.api._event_handlers
+        assert not neuron.api._entities
 
         try:
             self.module = importlib.import_module(self.module_name)
         except Exception:
             LOG.exception("Failed to load module %r", self.module_name)
             return
-
-        if reload:
-            # Make doubly sure the module is actually reloaded and not just
-            # quick-loaded from cache
-            self.module = importlib.reload(self.module)
 
         assert isinstance(self.module.__file__, str)
         self.module_path = Path(self.module.__file__).resolve()
