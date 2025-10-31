@@ -684,7 +684,7 @@ class Neuron:
             for subscription in sorted(self.subscriptions)
         }
 
-        with open("neuron.dump", "wb") as f:
+        with open("neuron-dump.json", "wb") as f:
             f.write(
                 orjson.dumps(
                     neuron,
