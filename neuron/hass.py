@@ -181,6 +181,16 @@ class HASS:
 
         return response
 
+    async def get_all_states(self) -> Any:
+        response = await self.message({"type": "get_states"})
+
+        if not response["success"]:
+            raise RuntimeError(
+                f"Failed to retrieve all states: {response['error']['message']}",
+            )
+
+        return response["result"]
+
     async def perform_action(
         self,
         domain: str,
