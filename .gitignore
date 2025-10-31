@@ -3,9 +3,15 @@
 __pycache__/
 *.log
 persistent-state.json
+.direnv
 
 # My own stuff
 /justfile
 /.nvimrc.lua
 /.envrc
 /.secret
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
