@@ -5,7 +5,7 @@ import asyncio
 import importlib
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
@@ -641,27 +641,57 @@ class Neuron:
                 await self.hass.unsubscribe(subscription.id)
                 del self.subscriptions[subscription]
 
-    def _log_state(self):
-        """Logs the entire application state for debugging"""
-        dump = []
+    def _dump_state(self):
+        """Dumps the full internal state of Neuron to disk for debugging"""
+        import orjson
 
-        dump.append(f"neuron.config = {self.config!r}")
+        neuron = {}
 
-        dump.append("neuron.automations =")
-        for automation in self.automations.values():
-            dump.append(f"  - {automation!r}")
+        neuron["config"] = asdict(self.config)
 
-        dump.append(f"neuron.packages = {self.packages!r}")
+        neuron["packages"] = [str(x) for x in self.packages]
 
-        dump.append("neuron.tasks =")
-        for task in self.tasks:
-            dump.append(f"  - {task.get_name()}")
+        neuron["tasks"] = [repr(task) for task in self.tasks]
 
-        dump.append("neuron.subscriptions =")
-        for subscription in self.subscriptions:
-            dump.append(f"  {subscription.id}: {subscription!r}")
+        neuron["automations"] = {
+            name: {
+                "name": automation.name,
+                "module_name": automation.module_name,
+                "enabled": automation.enabled,
+                "loaded": automation.loaded,
+                "initialized": automation.initialized,
+                "event_handlers": automation.event_handlers,
+                "trigger_handlers": automation.trigger_handlers,
+                "entities": automation.entities,
+            }
+            for name, automation in self.automations.items()
+        }
 
-        LOG.debug("Neuron state:\n%s", "\n".join(dump))
+        neuron["subscriptions"] = {
+            f"{subscription.id}": {
+                "subject": subscription.subject,
+                "automations": [a.name for a in subscription.automations],
+                "handlers": [
+                    [
+                        subscriber.name
+                        if subscriber is not NEURON_CORE
+                        else "NEURON_CORE",
+                        handler.__qualname__,
+                    ]
+                    for subscriber, handler in subscription.handlers
+                ],
+            }
+            for subscription in sorted(self.subscriptions)
+        }
+
+        with open("neuron.dump", "wb") as f:
+            f.write(
+                orjson.dumps(
+                    neuron,
+                    option=orjson.OPT_INDENT_2,
+                    default=lambda obj: repr(obj),
+                )
+            )
 
 
 class Subscriptions:
@@ -834,6 +864,12 @@ class Subscription:
         for handlers in self._handlers.values():
             for handler in handlers:
                 yield handler
+
+    def __gt__(self, other: Subscription) -> bool:
+        return self.id > other.id
+
+    def __lt__(self, other: Subscription) -> bool:
+        return self.id < other.id
 
     @overload
     def __getitem__(self, automation: Automation) -> list[Callable]:

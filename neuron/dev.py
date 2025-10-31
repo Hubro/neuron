@@ -5,7 +5,6 @@ import importlib
 import signal
 import sys
 
-
 from neuron.logging import get_logger, setup_dev_logging
 from neuron.util import debounce
 
@@ -45,7 +44,7 @@ async def main():
     )
 
     def sigusr2_handler():
-        neuron._log_state()
+        neuron._dump_state()
 
     signal.signal(
         signal.SIGUSR2,
