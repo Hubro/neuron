@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any, cast
 import orjson
 import websockets
 
+from .config import DEV
 from .event_emitter import EventEmitter
 from .logging import get_logger
 from .util import stringify
-from .config import DEV
 
 if TYPE_CHECKING:
     from .api import Entity
@@ -249,10 +249,8 @@ class HASS:
         id = response["id"]
 
         if not response["success"]:
-            LOG.error(
-                "Failed to subscribe to event %r: %s",
-                event,
-                response["error"]["message"],
+            raise RuntimeError(
+                f"Failed to subscribe to event {event!r}: {response['error']['message']}",
             )
 
         LOG.debug("Subscribed to event (id=%d): %s", id, event)
@@ -272,10 +270,8 @@ class HASS:
         id = response["id"]
 
         if not response["success"]:
-            LOG.error(
-                "Failed to subscribe to trigger %r: %s",
-                key,
-                response["error"]["message"],
+            raise RuntimeError(
+                f"Failed to subscribe to trigger {key!r}: {response['error']['message']}",
             )
 
         LOG.debug("Subscribed to trigger (id=%d): %s", id, key)
@@ -295,10 +291,8 @@ class HASS:
         id = response["id"]
 
         if not response["success"]:
-            LOG.error(
-                "Failed to subscribe to entities %r: %s",
-                entity_ids,
-                response["error"]["message"],
+            raise RuntimeError(
+                f"Failed to subscribe to entity states {entities!r}: {response['error']['message']}",
             )
 
         LOG.debug("Subscribed to entities (id=%d): %s", id, entity_ids)
