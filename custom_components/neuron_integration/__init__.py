@@ -46,8 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
         partial(_handle_event, hass),
     )
 
-    # Get a full state update from Neuron before proceeding
-    await _solicit_full_update(hass)
+    asyncio.create_task(_solicit_full_update(hass), name="solicit-initial-full-update")
 
     return True
 

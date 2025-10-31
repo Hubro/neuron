@@ -18,10 +18,18 @@ class EventEmitter:
 
         return event
 
+    def flag(self) -> asyncio.Event:
+        """Like event, but needs to be manually cleared"""
+        evt = self.event()
+        setattr(evt, "_is_flag", True)
+        return evt
+
     def emit(self):
         for event in self._events:
             event.set()
-            event.clear()
+
+            if not getattr(event, "_is_flag", False):
+                event.clear()
 
     def _prune(self):
         i = 0

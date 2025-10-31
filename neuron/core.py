@@ -137,14 +137,26 @@ class Neuron:
     async def event_subscription_handler_task(self):
         """Async task for keeping track of subscriptions and calling handlers"""
 
-        new_message = self.hass.messages.on_new_message.event()
+        new_message = self.hass.messages.on_new_message.flag()
         reconnected = self.hass.on_reconnect.event()
 
         try:
             while True:
+                new_message.clear()
+
                 for subscription in self.subscriptions:
                     for msg in self.hass.messages.pop(subscription.id, []):
                         await self.dispatch_event(msg)
+
+                    # Subscriptions are ordered by priority. If new messages
+                    # were received while processing subscriptions, we need to
+                    # start over to be sure that higher prio subscriptions are
+                    # always processed first.
+                    if new_message.is_set():
+                        break
+
+                if new_message.is_set():
+                    continue  # Go again!
 
                 async with wait_event(new_message, reconnected) as event:
                     if event is new_message:
@@ -1042,9 +1054,9 @@ class Automation:
                 if "a" in diff:
                     entity._attributes.update(diff["a"])
 
-                self.logger.trace("Updated entity state: %r", entity)
+                self.logger.debug("Updated entity state: %r", entity)
             else:
                 entity._state = state_object["s"]
                 entity._attributes = state_object["a"]
                 entity.initialized.set()
-                self.logger.trace("Set initial entity state: %r", entity)
+                self.logger.debug("Set initial entity state: %r", entity)
