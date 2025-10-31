@@ -46,7 +46,8 @@ async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
         partial(_handle_event, hass),
     )
 
-    asyncio.create_task(_solicit_full_update(hass), name="solicit-initial-full-update")
+    # asyncio.create_task(_solicit_full_update(hass), name="solicit-initial-full-update")
+    await _solicit_full_update(hass)
 
     return True
 
