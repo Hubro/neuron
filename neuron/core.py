@@ -620,8 +620,6 @@ class Neuron:
     async def eject_automation(self, automation: Automation):
         LOG.info("Ejecting automation: %s", automation.module_name)
 
-        assert automation.loaded
-
         if automation.initialized:
             await self.remove_automation_subscriptions(automation)
 
