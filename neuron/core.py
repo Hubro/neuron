@@ -44,6 +44,7 @@ class Neuron:
     tasks: list[asyncio.Task]
     subscriptions: Subscriptions
     state: NeuronState
+    managed_entities: list[ManagedEntity]
 
     _ready: asyncio.Event
     """Checkpoint for when Neuron is fully started up, including all automations"""
@@ -58,6 +59,7 @@ class Neuron:
         self.hass = HASS(self.config.hass_websocket_uri, self.config.hass_api_token)
         self.tasks = []
         self.subscriptions = Subscriptions()
+        self.managed_entities = []
         self._ready = asyncio.Event()
         self._stop = asyncio.Event()
 
@@ -280,6 +282,9 @@ class Neuron:
         except asyncio.CancelledError:
             return
 
+    def create_core_managed_entities(self):
+        pass  # TODO: Create stats entities
+
     async def load_packages(self):
         for package_name in self.config.packages:
             LOG.info("Importing package: %s", package_name)
@@ -312,6 +317,10 @@ class Neuron:
         # Flush persistent state to disc after all packages are loaded, so any
         # new automations show up there
         self.state.save()
+
+        self.create_core_managed_entities()
+
+        self._ready.set()
 
     async def reload_automations(self, module_paths: list[str]):
         """Reloads the given automation module paths"""
@@ -377,6 +386,23 @@ class Neuron:
 
         else:
             LOG.info("Automation loaded but is disabled")
+
+        automation_enabled = ManagedSwitch(
+            f"neuron_automation_{automation.name}_enabled",
+            friendly_name=f"Neuron - {automation.name} - Enabled",
+            initial_state=automation.enabled,
+        )
+        setattr(automation_enabled, "__automation", automation)
+
+        @automation_enabled.turned_on
+        async def on():
+            await self.enable_automation(automation)
+
+        @automation_enabled.turned_off
+        async def off():
+            await self.disable_automation(automation)
+
+        self.managed_entities.append(automation_enabled)
 
     async def init_automation(self, automation: Automation):
         """Initializes an automation"""
@@ -583,7 +609,7 @@ class Neuron:
                                 unique_id=entity.unique_id,
                                 friendly_name=entity.friendly_name or entity.name,
                                 state=entity.state,
-                                automation=automation,
+                                automation=automation.name if automation else None,
                             )
                         )
 
@@ -1159,3 +1185,7 @@ class Automation:
                 entity._attributes = state_object["a"]
                 entity.initialized.set()
                 self.logger.debug("Set initial entity state: %r", entity)
+
+
+# DEBUG    [neuron.hass] Got message from Home Assistant: {'id': 5, 'type': 'event', 'event': {'a': {'input_boolean.override_lights': {'s': 'on', 'a': {'editable': False, 'friendly_name': 'Override lights'}, 'c': {'id': '01KBABNT2ZXW4HKFV5MDPY8R87', hass.py:144
+#          'parent_id': None, 'user_id': '99a91bc643344446acf412415bc9dea7'}, 'lc': 1764505610.3358967}}}}
