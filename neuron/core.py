@@ -250,10 +250,12 @@ class Neuron:
                     logger.trace("Handler arguments: %r", handler_kwargs)
 
                 if automation is NEURON_CORE:
-                    await handler(**kwargs)
+                    coro = handler(**kwargs)
                 else:
                     with automation.api_context():
-                        await handler(**kwargs)
+                        coro = handler(**kwargs)
+
+                asyncio.create_task(coro, name=f"neutron_event-{id}-handler")
             except Exception:
                 logger.exception(
                     "Failed to execute subscription handler %r", handler_name
