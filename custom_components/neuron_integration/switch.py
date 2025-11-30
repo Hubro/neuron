@@ -40,6 +40,7 @@ class ManagedSwitch(SwitchEntity):
         self.hass = hass
         self.automation = automation
         self.unique_id = unique_id
+        self.entity_id = unique_id
         self.is_on = state == "on"
         self.name = friendly_name
 
@@ -62,26 +63,28 @@ class ManagedSwitch(SwitchEntity):
             LOG.exception("Failed to parse message from Neuron")
             return
 
-        if isinstance(message, bus.SetState):
-            assert message.state in ["on", "off"]
-            is_on = message.state == "on"
+        match message:
+            case bus.SetState(unique_id=self.unique_id):
+                assert message.state in ["on", "off"]
+                is_on = message.state == "on"
 
-            if self.is_on is not is_on:
-                self.is_on = is_on
-                LOG.info(
-                    "New switch state received from Neuron: %r %r",
-                    self.unique_id,
-                    message.state,
-                )
-                self.schedule_update_ha_state()
+                if self.is_on is not is_on:
+                    self.is_on = is_on
+                    LOG.info(
+                        "Managed switch %r state set from Neuron: %r",
+                        self.unique_id,
+                        message.state,
+                    )
+                    self.schedule_update_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         if self.is_on:
             return
 
+        LOG.info("Turning on managed switch: %r", self.unique_id)
+
         self.is_on = True
         self.schedule_update_ha_state()
-        LOG.info("Switch turned on: %r", self.unique_id)
 
         assert self.unique_id
 
@@ -91,9 +94,10 @@ class ManagedSwitch(SwitchEntity):
         if not self.is_on:
             return
 
+        LOG.info("Turning off managed switch: %r", self.unique_id)
+
         self.is_on = False
         self.schedule_update_ha_state()
-        LOG.info("Switch turned off: %r", self.unique_id)
 
         assert self.unique_id
 
