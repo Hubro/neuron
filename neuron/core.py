@@ -16,7 +16,7 @@ from typing_extensions import Sentinel
 import neuron.api
 import neuron.bus
 
-from .api import Entity, ManagedSwitch, StateChange, _ManagedEntity
+from .api import AsyncFunction, Entity, ManagedEntity, ManagedSwitch, StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .logging import NeuronLogger, get_logger
@@ -45,7 +45,11 @@ class Neuron:
     subscriptions: Subscriptions
     state: NeuronState
 
+    _ready: asyncio.Event
+    """Checkpoint for when Neuron is fully started up, including all automations"""
+
     _stop: asyncio.Event
+    """Signals graceful shutdown"""
 
     def __init__(self) -> None:
         self.automations = {}
@@ -54,6 +58,7 @@ class Neuron:
         self.hass = HASS(self.config.hass_websocket_uri, self.config.hass_api_token)
         self.tasks = []
         self.subscriptions = Subscriptions()
+        self._ready = asyncio.Event()
         self._stop = asyncio.Event()
 
     async def start(self):
@@ -94,7 +99,8 @@ class Neuron:
                     )
                     raise e
                 elif task.get_name() == "neuron_wait-for-stop-signal":
-                    pass
+                    LOG.info("Got stop signal, shutting down gracefully")
+                    return
                 else:
                     LOG.fatal(
                         f"Background task {task.get_name()} has exited unexpectedly!"
@@ -145,26 +151,22 @@ class Neuron:
                 new_message.clear()
 
                 for subscription in self.subscriptions:
-                    for msg in self.hass.messages.pop(subscription.id, []):
-                        await self.dispatch_event(msg)
+                    if messages := self.hass.messages.pop(subscription.id, []):
+                        for msg in messages:
+                            await self.dispatch_event(msg)
 
-                    # Subscriptions are ordered by priority. If new messages
-                    # were received while processing subscriptions, we need to
-                    # start over to be sure that higher prio subscriptions are
-                    # always processed first.
-                    if new_message.is_set():
+                        # New events can arrive while dispatching the previous
+                        # event. Starting over ensures that higher priority
+                        # subscriptions are processed first.
                         break
+                else:
+                    async with wait_event(new_message, reconnected) as event:
+                        if event is new_message:
+                            pass
 
-                if new_message.is_set():
-                    continue  # Go again!
-
-                async with wait_event(new_message, reconnected) as event:
-                    if event is new_message:
-                        pass
-
-                    if event is reconnected:
-                        LOG.info("Reconnected to Home Assistant")
-                        await self.reestablish_subscriptions()
+                        if event is reconnected:
+                            LOG.info("Reconnected to Home Assistant")
+                            await self.reestablish_subscriptions()
 
         except asyncio.CancelledError:
             return
@@ -215,6 +217,14 @@ class Neuron:
         # The subscriptions might mutate as a result of dispatching this event,
         # so we need to copy the list of handlers before iterating over it
         handlers = self.subscriptions[id].handlers.copy()
+
+        if not handlers:
+            LOG.error(
+                "No handlers found for subscription %r: %r",
+                id,
+                self.subscriptions[id].key,
+            )
+            return
 
         # FIXME: Quick dirty hack, fix ASAP!
         object.__setattr__(
@@ -527,6 +537,10 @@ class Neuron:
     async def integration_message_handler(self, event_type: str, event: dict[str, Any]):
         """Event handler for messages from the Neuron integration"""
 
+        # Don't answer any messages from the integration until we're fully up
+        # and running
+        await self._ready.wait()
+
         assert event_type == "neuron"
 
         try:
@@ -540,10 +554,13 @@ class Neuron:
 
         LOG.trace("Got message from Neuron companion integration: %r", message)
 
-        def managed_entities() -> Iterator[tuple[str, _ManagedEntity]]:
+        def managed_entities() -> Iterator[tuple[Automation | None, ManagedEntity]]:
+            for entity in self.managed_entities:
+                yield (None, entity)
+
             for automation in self.automations.values():
                 for entity in automation.managed_entities.values():
-                    yield (automation.name, entity)
+                    yield (automation, entity)
 
         match message:
             case neuron.bus.RequestingFullUpdate():
@@ -588,7 +605,12 @@ class Neuron:
                             if new_state == old_state:
                                 break
 
-                            await managed_entity.set_state(new_state)
+                            await managed_entity.set_state(
+                                new_state,
+                                suppress_handler=(
+                                    automation and not automation.initialized
+                                ),
+                            )
                             break
 
             case other:
@@ -1044,7 +1066,7 @@ class Automation:
     trigger_handlers: list[tuple[dict, Callable]]
     event_handlers: list[tuple[str, Callable]]
     entities: dict[str, Entity]
-    managed_entities: dict[str, _ManagedEntity]
+    managed_entities: dict[str, ManagedEntity]
 
     def __init__(self, module_path: Path, enabled: bool = True):
         package_path = module_path.parent.parent
@@ -1078,7 +1100,8 @@ class Automation:
         assert not neuron.api._managed_entities
 
         try:
-            self.module = importlib.import_module(self.module_name)
+            with self.api_context():
+                self.module = importlib.import_module(self.module_name)
         except Exception:
             LOG.exception("Failed to load module %r", self.module_name)
             neuron.api._clear()
@@ -1100,15 +1123,14 @@ class Automation:
     def api_context(self):
         """Readies the API context for executing handlers from this automation"""
 
-        restore = neuron.api._logger.get()
-        neuron.api._logger.set(self.logger)
-
-        neuron.api._automation.set(self)
+        logger_restore = neuron.api._logger.set(self.logger)
+        automation_restore = neuron.api._automation.set(self)
 
         try:
             yield
         finally:
-            neuron.api._logger.set(restore)
+            neuron.api._logger.reset(logger_restore)
+            neuron.api._automation.reset(automation_restore)
 
     async def subscribe_entities_handler(self, entity_states: dict[str, Any] | None):
         entity_states = entity_states or {}

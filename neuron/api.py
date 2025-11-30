@@ -53,7 +53,7 @@ __all__ = [
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
 _event_handlers: list[tuple[str, AsyncFunction]] = []
 _entities: dict[str, Entity] = {}
-_managed_entities: dict[str, _ManagedEntity] = {}
+_managed_entities: dict[str, ManagedEntity] = {}
 
 _neuron: Neuron | None = None
 _automation = ContextVar("automation")
@@ -532,7 +532,7 @@ class Entity:
         await self.action("stop_cover", data=data)
 
 
-class _ManagedEntity(ABC):
+class ManagedEntity(ABC):
     """Base class for entities created and managed by Neuron"""
 
     unique_id: str
@@ -559,7 +559,10 @@ class _ManagedEntity(ABC):
         else:
             self._state = initial_state
 
-        _managed_entities[unique_id] = self
+        # Only register managed entities while loading an automation, that way
+        # Neuron Core can use this API as well.
+        if _automation.get(None):
+            _managed_entities[unique_id] = self
 
     @abstractmethod
     async def _on_change(self, change: StateChange):
@@ -569,7 +572,7 @@ class _ManagedEntity(ABC):
     def state(self) -> str:
         return self._state
 
-    async def set_state(self, state: str):
+    async def set_state(self, state: str, *, suppress_handler: bool = False):
         """Sets the state of this managed entity and transmits it to the integration"""
 
         old_state = self._state
@@ -583,21 +586,22 @@ class _ManagedEntity(ABC):
 
         await _n().set_managed_entity_state(self.unique_id, state)
 
-        await self._on_change(
-            **filter_keyword_args(
-                self._on_change,
-                {
-                    "change": StateChange(
-                        from_state=old_state,
-                        to_state=state,
-                    ),
-                    "log": _l(),
-                },
+        if not suppress_handler:
+            await self._on_change(
+                **filter_keyword_args(
+                    self._on_change,
+                    {
+                        "change": StateChange(
+                            from_state=old_state,
+                            to_state=state,
+                        ),
+                        "log": _l(),
+                    },
+                )
             )
-        )
 
 
-class ManagedSwitch(_ManagedEntity):
+class ManagedSwitch(ManagedEntity):
     """A switch entity created and managed by Neuron
 
     Usage:
@@ -698,10 +702,10 @@ class ManagedSwitch(_ManagedEntity):
             await self.turn_on()
             return True
 
-    async def set_state(self, state: str):
+    async def set_state(self, state: str, **kwargs):
         assert state in ["on", "off"]
 
-        await super().set_state(state)
+        await super().set_state(state, **kwargs)
 
     @property
     def is_on(self) -> bool:
