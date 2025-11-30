@@ -6,32 +6,43 @@ from typing import assert_never
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 
 from . import bus
 from .const import DOMAIN
-from .sensor import NeuronSensor, NeuronStatsSensor
-from .switch import AutomationEnabledSwitch
-from .util import neuron_data
+from .switch import ManagedSwitch
+from .util import neuron_data, neuron_device_info
 
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
 
 LOG = logging.getLogger(__name__)
 
 
-async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # config={'created_at': '2025-10-01T22:22:48.588577+00:00', 'data': {'addon': 'Neuron'}, 'discovery_keys': {'hassio': (DiscoveryKey(domain='hassio', key='be7bc7f728b3492b90e10cb61d2ecbe4', version=1),)}, 'disabled_by': None, 'domain': 'neuron', 'entry_id': '01K6GXXY8C4FQAPFTEVPN6NK27', 'minor_version': 0, 'modified_at': '2025-10-01T22:22:48.588591+00:00', 'options': {}, 'pref_disable_new_entities': False, 'pref_disable_polling': False, 'source': 'hassio', 'subentries': [], 'title': 'Neuron', 'unique_id': 'neuron', 'version': 0}
     LOG.info("Setting up Neuron integration")
 
-    await hass.config_entries.async_forward_entry_setups(config, ["switch", "sensor"])
+    setup_neuron_device(hass, entry)
 
     data = neuron_data(hass)
+    if not data.add_sensor_entities:
+        await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    if not data.add_switch_entities:
+        await hass.config_entries.async_forward_entry_setups(entry, ["switch"])
+
     data.cleanup_event_listener = hass.bus.async_listen(
         "neuron",
         partial(_handle_event, hass),
     )
 
-    await _solicit_full_update(hass)
+    try:
+        await _solicit_full_update(hass)
+    except Exception:
+        LOG.info("Cleaning up event listener")
+        data.cleanup_event_listener()
+        raise
 
+    LOG.info("Neuron integration setup complete")
     return True
 
 
@@ -57,12 +68,10 @@ async def _solicit_full_update(hass):
     LOG.info("Sending RequestingFullUpdate event")
     hass.bus.async_fire("neuron", bus.RequestingFullUpdate().model_dump())
 
-    await asyncio.sleep(1)
+    await asyncio.sleep(3)
 
     if not data.entities_created:
         raise ConfigEntryNotReady("No response from Neuron, try again soon")
-
-    return
 
 
 async def _handle_event(hass: HomeAssistant, event: Event):
@@ -82,16 +91,18 @@ async def _handle_event(hass: HomeAssistant, event: Event):
             LOG.info("Received full state update from Neuron: %r", message)
             setup_entities(hass, message)
 
-        case bus.StatsUpdate():
-            LOG.info("Received stats update from Neuron: %r", message)
-            # Entities handle this update directly
-
-        case bus.AutomationUpdate():
-            LOG.info("Received automation update from Neuron: %r", message)
-            # Entities handle this update directly
+        case bus.SetState():
+            pass  # Handled by each entity
 
         case other:
             assert_never(other)
+
+
+def setup_neuron_device(hass: HomeAssistant, entry: ConfigEntry):
+    device_registry = dr.async_get(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id, **neuron_device_info()
+    )
 
 
 def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
@@ -99,47 +110,16 @@ def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
     assert data.add_switch_entities
     assert data.add_sensor_entities
 
-    data.add_sensor_entities(
-        [
-            NeuronStatsSensor(
-                hass, stat="trigger_subscriptions", state=message.trigger_subscriptions
-            ),
-            NeuronStatsSensor(
-                hass, stat="event_subscriptions", state=message.event_subscriptions
-            ),
-            NeuronStatsSensor(
-                hass, stat="state_subscriptions", state=message.state_subscriptions
-            ),
-        ]
-    )
-
-    for automation in message.automations:
+    for x in message.managed_switches:
         data.add_switch_entities(
             [
-                AutomationEnabledSwitch(hass, automation),
-            ]
-        )
-
-        data.add_sensor_entities(
-            [
-                NeuronSensor(
+                ManagedSwitch(
                     hass,
-                    automation.name,
-                    "trigger_subscriptions",
-                    state=automation.trigger_subscriptions,
-                ),
-                NeuronSensor(
-                    hass,
-                    automation.name,
-                    "event_subscriptions",
-                    state=automation.event_subscriptions,
-                ),
-                NeuronSensor(
-                    hass,
-                    automation.name,
-                    "state_subscriptions",
-                    state=automation.state_subscriptions,
-                ),
+                    automation=x.automation,
+                    unique_id=x.unique_id,
+                    state=x.state,
+                    friendly_name=x.friendly_name,
+                )
             ]
         )
 

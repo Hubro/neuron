@@ -29,18 +29,25 @@ class NeuronIntegrationMessage(BaseMessage):
 
 
 class RequestingFullUpdate(NeuronIntegrationMessage):
-    """Requests a full dump of Sedrec's state"""
+    """Requests a full dump of Sedrec's managed entity state"""
 
     type: Literal["requesting-full-update"] = "requesting-full-update"
 
 
-class UpdateAutomation(NeuronIntegrationMessage):
-    """Updates the state of an automation"""
+class SwitchTurnedOn(NeuronIntegrationMessage):
+    """Informs Neuron that a managed switch was turned on"""
 
-    type: Literal["update-automation"] = "update-automation"
+    type: Literal["switch-turned-on"] = "switch-turned-on"
 
-    automation: str  # Automation module name
-    enabled: bool | None = None
+    unique_id: str
+
+
+class SwitchTurnedOff(NeuronIntegrationMessage):
+    """Informs Neuron that a managed switch was turned off"""
+
+    type: Literal["switch-turned-off"] = "switch-turned-off"
+
+    unique_id: str
 
 
 #
@@ -49,31 +56,33 @@ class UpdateAutomation(NeuronIntegrationMessage):
 
 
 class FullUpdate(NeuronCoreMessage):
+    """A full update of managed entities
+
+    The integration can assume that any entities that aren't mentioned in
+    this message can be disowned or deleted.
+    """
+
     type: Literal["full-update"] = "full-update"
-    trigger_subscriptions: int
-    event_subscriptions: int
-    state_subscriptions: int
-    automations: list[Automation]
+    managed_switches: list[ManagedSwitch]
+    # managed_sensors: list[ManagedSensor]
 
 
-class StatsUpdate(NeuronCoreMessage):
-    type: Literal["stats-update"] = "stats-update"
-    trigger_subscriptions: int
-    event_subscriptions: int
-    state_subscriptions: int
+class SetState(NeuronCoreMessage):
+    """Tell the integration to set the state of a managed entity"""
+
+    type: Literal["set-state"] = "set-state"
+    unique_id: str
+    state: str
+
+    # TODO: Attributes
 
 
-class Automation(BaseModel):
-    name: str
-    module_name: str
-    enabled: bool
-    trigger_subscriptions: int
-    event_subscriptions: int
-    state_subscriptions: int
-
-
-class AutomationUpdate(NeuronCoreMessage, Automation):
-    type: Literal["automation-update"] = "automation-update"
+class ManagedSwitch(BaseModel):
+    unique_id: str
+    friendly_name: str
+    automation: str | None  # None means that the entity is managed by Neuron core
+    state: str
+    # attributes: dict[str, str]
 
 
 #
@@ -82,11 +91,7 @@ class AutomationUpdate(NeuronCoreMessage, Automation):
 
 
 Message = (
-    RequestingFullUpdate
-    | UpdateAutomation
-    | FullUpdate
-    | StatsUpdate
-    | AutomationUpdate
+    RequestingFullUpdate | SwitchTurnedOn | SwitchTurnedOff | FullUpdate | SetState
 )
 
 

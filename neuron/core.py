@@ -9,18 +9,18 @@ from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, assert_never, overload
+from typing import Any, Callable, Iterator, assert_never, cast, overload
 
 from typing_extensions import Sentinel
 
 import neuron.api
 import neuron.bus
 
-from .api import Entity, StateChange
+from .api import Entity, ManagedSwitch, StateChange, _ManagedEntity
 from .config import Config, load_config
 from .hass import HASS
 from .logging import NeuronLogger, get_logger
-from .state import AutomationState, NeuronState
+from .state import AutomationState, ManagedEntityState, NeuronState
 from .util import (
     filter_keyword_args,
     stringify,
@@ -536,51 +536,83 @@ class Neuron:
         if isinstance(message, neuron.bus.NeuronCoreMessage):
             return  # Ignore our own messages
 
-        LOG.info("Got message from Neuron companion integration: %r", message)
+        LOG.trace("Got message from Neuron companion integration: %r", message)
+
+        def managed_entities() -> Iterator[tuple[str, _ManagedEntity]]:
+            for automation in self.automations.values():
+                for entity in automation.managed_entities.values():
+                    yield (automation.name, entity)
 
         match message:
             case neuron.bus.RequestingFullUpdate():
-                total_trigger_subscriptions = sum(
-                    1 for sub in self.subscriptions if sub.trigger
-                )
-                total_event_subscriptions = sum(
-                    1 for sub in self.subscriptions if sub.event
-                )
-                total_state_subscriptions = sum(
-                    1 for sub in self.subscriptions if sub.entities
-                )
+                # total_trigger_subscriptions = sum(
+                #     1 for sub in self.subscriptions if sub.trigger
+                # )
+                # total_event_subscriptions = sum(
+                #     1 for sub in self.subscriptions if sub.event
+                # )
+                # total_state_subscriptions = sum(
+                #     1 for sub in self.subscriptions if sub.entities
+                # )
 
-                payload = neuron.bus.FullUpdate(
-                    trigger_subscriptions=total_trigger_subscriptions,
-                    event_subscriptions=total_event_subscriptions,
-                    state_subscriptions=total_state_subscriptions,
-                    automations=[
-                        neuron.bus.Automation(
-                            name=automation.name,
-                            module_name=automation.module_name,
-                            enabled=automation.enabled,
-                            trigger_subscriptions=len(automation.trigger_handlers),
-                            event_subscriptions=len(automation.event_handlers),
-                            state_subscriptions=len(automation.entities),
+                managed_switches = []
+
+                for automation, entity in managed_entities():
+                    if entity.domain == "switch":
+                        managed_switches.append(
+                            neuron.bus.ManagedSwitch(
+                                unique_id=entity.unique_id,
+                                friendly_name=entity.friendly_name or entity.name,
+                                state=entity.state,
+                                automation=automation,
+                            )
                         )
-                        for automation in self.automations.values()
-                    ],
+
+                message = neuron.bus.FullUpdate(managed_switches=managed_switches)
+
+                LOG.info("Sending full update to Neuron integration | %r", message)
+                await self.send_to_integration(message)
+
+            case neuron.bus.SwitchTurnedOff() | neuron.bus.SwitchTurnedOn():
+                new_state = (
+                    "on" if isinstance(message, neuron.bus.SwitchTurnedOn) else "off"
                 )
 
-                LOG.info("Sending full update to Neuron integration | %r", payload)
-                await self.hass.fire_event("neuron", data=payload.model_dump())
+                for automation, managed_entity in managed_entities():
+                    match managed_entity:
+                        case ManagedSwitch(unique_id=message.unique_id):
+                            old_state = managed_entity.state
 
-            case neuron.bus.UpdateAutomation():
-                automation = self.automations[message.automation]
+                            if new_state == old_state:
+                                break
 
-                if message.enabled is not None:
-                    if message.enabled:
-                        await self.enable_automation(automation)
-                    else:
-                        await self.disable_automation(automation)
+                            await managed_entity.set_state(new_state)
+                            break
 
             case other:
                 assert_never(other)
+
+    async def send_to_integration(self, message: neuron.bus.NeuronCoreMessage):
+        LOG.debug("Sending message to integration: %r", message)
+        await self.hass.fire_event("neuron", data=message.model_dump())
+
+    # TODO: Attributes
+    async def set_managed_entity_state(self, entity_id: str, state: str):
+        LOG.debug("Setting state of managed entity %r to %r", entity_id, state)
+
+        if x := self.state.managed_entity_states.get(entity_id):
+            if x.state == state:
+                return  # State unchanged
+
+            x.state = state
+        else:
+            self.state.managed_entity_states[entity_id] = ManagedEntityState(state)
+
+        await self.send_to_integration(
+            neuron.bus.SetState(unique_id=entity_id, state=state)
+        )
+
+        self.state.save()
 
     async def subscribe(
         self,
@@ -1010,6 +1042,7 @@ class Automation:
     trigger_handlers: list[tuple[dict, Callable]]
     event_handlers: list[tuple[str, Callable]]
     entities: dict[str, Entity]
+    managed_entities: dict[str, _ManagedEntity]
 
     def __init__(self, module_path: Path, enabled: bool = True):
         package_path = module_path.parent.parent
@@ -1023,6 +1056,7 @@ class Automation:
         self.trigger_handlers = []
         self.event_handlers = []
         self.entities = {}
+        self.managed_entities = {}
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.module_name!r}>"
@@ -1039,11 +1073,13 @@ class Automation:
         assert not neuron.api._trigger_handlers
         assert not neuron.api._event_handlers
         assert not neuron.api._entities
+        assert not neuron.api._managed_entities
 
         try:
             self.module = importlib.import_module(self.module_name)
         except Exception:
             LOG.exception("Failed to load module %r", self.module_name)
+            neuron.api._clear()
             return
 
         assert isinstance(self.module.__file__, str)
@@ -1053,6 +1089,7 @@ class Automation:
         self.trigger_handlers = neuron.api._trigger_handlers.copy()
         self.event_handlers = neuron.api._event_handlers.copy()
         self.entities = neuron.api._entities.copy()
+        self.managed_entities = neuron.api._managed_entities.copy()
         neuron.api._clear()
 
         self.loaded = True

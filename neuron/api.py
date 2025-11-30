@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
@@ -15,13 +16,19 @@ from typing import (
     Callable,
     Coroutine,
     Iterable,
+    Literal,
     Self,
     Sequence,
     TypeAlias,
+    TypeGuard,
+    TypeIs,
+    TypeVar,
+    cast,
     overload,
 )
 
 from neuron.logging import NeuronLogger, get_logger
+from neuron.util import filter_keyword_args
 
 if TYPE_CHECKING:
     from neuron.core import Neuron
@@ -37,6 +44,7 @@ __all__ = [
     "turn_off",
     "get_logger",
     "Entity",
+    "ManagedSwitch",
     "StateChange",
     "NeuronLogger",
     "SubscriptionHandle",
@@ -45,10 +53,11 @@ __all__ = [
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
 _event_handlers: list[tuple[str, AsyncFunction]] = []
 _entities: dict[str, Entity] = {}
+_managed_entities: dict[str, _ManagedEntity] = {}
+
 _neuron: Neuron | None = None
 _automation = ContextVar("automation")
-_api_logger = get_logger(__name__)
-_logger = ContextVar("logger", default=_api_logger)
+_logger = ContextVar("logger", default=get_logger(__name__))
 
 
 @overload
@@ -331,11 +340,13 @@ def _reset():
 
 
 def _clear():
-    """Clears registered handlers"""
-    global _trigger_handlers, _event_handlers, _entities
+    """Clears automation buffers"""
+    global _trigger_handlers, _event_handlers, _entities, _managed_entities
+
     _trigger_handlers = []
     _event_handlers = []
     _entities = {}
+    _managed_entities = {}
 
 
 class Entity:
@@ -374,16 +385,13 @@ class Entity:
     def __bool__(self) -> bool:
         """Allows practical usage in conditionals for boolean entities"""
 
-        if self.domain in ["binary_sensor", "switch"]:
+        if self.domain in ["binary_sensor", "switch", "input_boolean"]:
             return self.is_on
 
         raise ValueError("Ambiguous truthiness for entity of domain %r", self.domain)
 
     @property
     def state(self) -> str:
-        # NB: I'm not sure if this can happen, but if it does, I have to make
-        # sure all entity states have been set before starting other
-        # subscriptions
         if self._state is None:
             raise RuntimeError(f"State for {self.entity_id!r} is not yet initialized")
 
@@ -420,6 +428,12 @@ class Entity:
     @overload
     def on_change(
         self,
+        h: AsyncFunction,
+    ) -> AsyncFunction: ...
+
+    @overload
+    def on_change(
+        self,
         *,
         handler: AsyncFunction,
         from_state: str | Iterable[str] | None = None,
@@ -431,6 +445,7 @@ class Entity:
 
     def on_change(
         self,
+        h: AsyncFunction | None = None,
         *,
         handler: AsyncFunction | None = None,
         from_state: str | Iterable[str] | None = None,
@@ -439,8 +454,17 @@ class Entity:
         not_to_state: str | Iterable[str] | None = None,
         duration: timedelta | int | str | None = None,
     ):
-        """Shortcut for on_state_change for this entity"""
-        return on_state_change(
+        """Shortcut for on_state_change for this entity
+
+        If a positional argument was given, we assume this function was used
+        directly as a decorator, for example:
+
+            @MyEntity.on_change
+            async def foo():
+                ...
+        """
+
+        result = on_state_change(
             self,
             handler=handler,
             from_state=from_state,
@@ -449,6 +473,12 @@ class Entity:
             not_to_state=not_to_state,
             duration=duration,
         )
+
+        if h:
+            result = cast(Decorator, result)
+            return result(h)
+
+        return result
 
     async def action(
         self,
@@ -500,6 +530,186 @@ class Entity:
     async def stop_cover(self, **data):
         """Shortcut for stopping a cover entity"""
         await self.action("stop_cover", data=data)
+
+
+class _ManagedEntity(ABC):
+    """Base class for entities created and managed by Neuron"""
+
+    unique_id: str
+    domain: str
+    name: str
+    friendly_name: str | None
+
+    _state: str
+
+    def __init__(
+        self,
+        unique_id: str,
+        initial_state: str,
+        friendly_name: str | None = None,
+    ):
+        assert unique_id.count(".") == 1, "unique_id must contain 1 period symbol"
+
+        self.unique_id = unique_id
+        self.domain, self.name = unique_id.split(".")
+        self.friendly_name = friendly_name
+
+        if x := _n().state.managed_entity_states.get(unique_id):
+            self._state = x.state
+        else:
+            self._state = initial_state
+
+        _managed_entities[unique_id] = self
+
+    @abstractmethod
+    async def _on_change(self, change: StateChange):
+        raise NotImplementedError("Subclasses should override this method")
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    async def set_state(self, state: str):
+        """Sets the state of this managed entity and transmits it to the integration"""
+
+        old_state = self._state
+
+        if state == old_state:
+            return
+
+        self._state = state
+
+        # TODO: Attributes
+
+        await _n().set_managed_entity_state(self.unique_id, state)
+
+        await self._on_change(
+            **filter_keyword_args(
+                self._on_change,
+                {
+                    "change": StateChange(
+                        from_state=old_state,
+                        to_state=state,
+                    ),
+                    "log": _l(),
+                },
+            )
+        )
+
+
+class ManagedSwitch(_ManagedEntity):
+    """A switch entity created and managed by Neuron
+
+    Usage:
+
+    my_switch = ManagedSwitch("shields_up")
+
+    @my_switch.turned_on
+    async def my_switch_on(log: NeuronLogger):
+        log.info("Shields are up!")
+
+    @my_switch.turned_off
+    async def my_switch_off(log: NeuronLogger):
+        log.info("Shields down")
+    """
+
+    _turned_on_handler: AsyncFunction | None
+    _turned_off_handler: AsyncFunction | None
+
+    def __init__(
+        self,
+        name: str,
+        initial_state: Literal["on", "off", True, False],
+        friendly_name: str | None = None,
+    ):
+        assert "." not in name, "Name can not contain period symbol"
+
+        match initial_state:
+            case True:
+                initial_state = "on"
+            case False:
+                initial_state = "off"
+
+        super().__init__(
+            unique_id=f"switch.{name}",
+            initial_state=initial_state,
+            friendly_name=friendly_name,
+        )
+
+    async def _on_change(self, change: StateChange):
+        assert change.to_state in ["on", "off"]
+        assert change.from_state != change.to_state
+
+        if change.to_state == "on" and self._turned_on_handler is not None:
+            kwargs = filter_keyword_args(self._turned_on_handler, {"log": _l()})
+            await self._turned_on_handler(**kwargs)
+
+        elif change.to_state == "off" and self._turned_off_handler is not None:
+            kwargs = filter_keyword_args(self._turned_off_handler, {"log": _l()})
+            await self._turned_off_handler(**kwargs)
+
+    @overload
+    def turned_on(self, handler: None = None) -> Decorator: ...
+
+    @overload
+    def turned_on(self, handler: AsyncFunction) -> None: ...
+
+    def turned_on(self, handler: AsyncFunction | None = None):
+        def decorator(handler: AsyncFunction, /):
+            self._turned_on_handler = handler
+
+            return handler
+
+        if handler:
+            decorator(handler)
+        else:
+            return decorator
+
+    @overload
+    def turned_off(self, handler: None = None) -> Decorator: ...
+
+    @overload
+    def turned_off(self, handler: AsyncFunction) -> None: ...
+
+    def turned_off(self, handler: AsyncFunction | None = None):
+        def decorator(handler: AsyncFunction, /):
+            self._turned_off_handler = handler
+
+            return handler
+
+        if handler:
+            decorator(handler)
+        else:
+            return decorator
+
+    async def turn_on(self):
+        await self.set_state("on")
+
+    async def turn_off(self):
+        await self.set_state("off")
+
+    async def toggle(self) -> bool:
+        """Toggles the switch and returns the new toggled state"""
+
+        if self.is_on:
+            await self.turn_off()
+            return False
+        else:
+            await self.turn_on()
+            return True
+
+    async def set_state(self, state: str):
+        assert state in ["on", "off"]
+
+        await super().set_state(state)
+
+    @property
+    def is_on(self) -> bool:
+        return self._state == "on"
+
+    @property
+    def is_off(self) -> bool:
+        return self._state == "off"
 
 
 @dataclass
@@ -618,4 +828,5 @@ class StateChange:
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
 EntityTarget: TypeAlias = str | Entity | Sequence[str | Entity]
 SubscriptionHandle: TypeAlias = tuple[str | dict, AsyncFunction]
-Decorator: TypeAlias = Callable[[AsyncFunction], AsyncFunction]
+HandlerFn = TypeVar("HandlerFn", default=AsyncFunction)
+Decorator: TypeAlias = Callable[[HandlerFn], HandlerFn]

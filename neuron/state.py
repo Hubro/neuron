@@ -1,4 +1,4 @@
-"""For storing persistent state to disc"""
+"""For storing persistent state to disk"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 import orjson
 
@@ -20,11 +20,7 @@ LOG = get_logger(__name__)
 class NeuronState:
     enabled: bool = True
     automations: dict[str, AutomationState] = field(default_factory=dict)
-
-    def __post_init__(self):
-        for name, automation in list(self.automations.items()):
-            if isinstance(automation, dict):
-                self.automations[name] = AutomationState(**automation)
+    managed_entity_states: dict[str, ManagedEntityState] = field(default_factory=dict)
 
     @staticmethod
     def get_path() -> Path:
@@ -42,7 +38,7 @@ class NeuronState:
 
             try:
                 raw_state = orjson.loads(state_path.read_bytes())
-                state = cls(**raw_state)
+                state = cls.from_dict(raw_state)
             except Exception:
                 LOG.error(
                     "Failed to read persistent config, please fix or delete the file"
@@ -56,6 +52,22 @@ class NeuronState:
             state.save()
 
         return state
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Self:
+        automations = d.setdefault("automations", {})
+
+        for name, automation in list(automations.items()):
+            if isinstance(automation, dict):
+                automations[name] = AutomationState(**automation)
+
+        managed_entity_states = d.setdefault("managed_entity_states", {})
+
+        for entity_id, state in list(managed_entity_states.items()):
+            if isinstance(state, dict):
+                managed_entity_states[entity_id] = ManagedEntityState(**state)
+
+        return cls(**d)
 
     # TODO: Instead of saving directly to disk, instead set a flag that causes
     # a separate thread to do the saving, avoiding the main thread locking up
@@ -82,16 +94,26 @@ class AutomationState:
     enabled: bool = True
 
 
+@dataclass
+class ManagedEntityState:
+    state: str
+    attributes: dict[str, str] = field(default_factory=dict)
+
+
 if __name__ == "__main__":
     state = NeuronState(
         automations={
             "foo": AutomationState(enabled=True),
             "bar": AutomationState(enabled=False),
-        }
+        },
+        managed_entity_states={
+            "switch.foo": ManagedEntityState("on"),
+            "switch.bar": ManagedEntityState("off"),
+        },
     )
     dict_state = asdict(state)
 
     print(f"{state=}")
     print(f"{dict_state=}")
 
-    print(f"{NeuronState(**dict_state)=}")
+    print(f"{NeuronState.from_dict(dict_state)=}")
