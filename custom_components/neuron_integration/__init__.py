@@ -36,7 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
 
     try:
-        await _solicit_full_update(hass)
+        await _sync_from_neuron(hass)
     except Exception:
         LOG.info("Cleaning up event listener")
         data.cleanup_event_listener()
@@ -55,13 +55,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         LOG.info("Cleaning up event listener")
         data.cleanup_event_listener()
 
+    await teardown_entities(hass)
+
     await hass.config_entries.async_unload_platforms(entry, ["switch", "sensor"])
 
     return True
 
 
-async def _solicit_full_update(hass):
-    """Requests a full state update from Neuron"""
+async def _sync_from_neuron(hass):
+    """Gets a full update from Neuron and creates all entities"""
 
     data = neuron_data(hass)
 
@@ -107,11 +109,9 @@ def setup_neuron_device(hass: HomeAssistant, entry: ConfigEntry):
 
 def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
     data = neuron_data(hass)
-    assert data.add_switch_entities
-    assert data.add_sensor_entities
 
     for x in message.managed_switches:
-        data.add_switch_entities(
+        data.add_switches(
             [
                 ManagedSwitch(
                     hass,
@@ -124,3 +124,10 @@ def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
         )
 
     data.entities_created = True
+
+
+async def teardown_entities(hass: HomeAssistant):
+    data = neuron_data(hass)
+
+    for switch in data.switches:
+        await switch.async_remove()
