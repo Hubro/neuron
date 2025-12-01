@@ -34,18 +34,24 @@ class ManagedSwitch(SwitchEntity):
         hass: HomeAssistant,
         automation: str | None,
         unique_id: str,
-        state: str,
+        value: bool,
         friendly_name: str,
     ) -> None:
         self.hass = hass
         self.automation = automation
         self.unique_id = unique_id
         self.entity_id = unique_id
-        self.is_on = state == "on"
+        self.is_on = value
         self.name = friendly_name
 
         # Generic properties: https://developers.home-assistant.io/docs/core/entity#generic-properties
         self.should_poll = False
+
+        # Registry properties: https://developers.home-assistant.io/docs/core/entity#registry-properties
+        if self.automation:
+            self.device_info = automation_device_info(self.automation)
+        else:
+            self.device_info = neuron_device_info()
 
     async def async_added_to_hass(self) -> None:
         self.stop_event_listener = self.hass.bus.async_listen(
@@ -64,16 +70,15 @@ class ManagedSwitch(SwitchEntity):
             return
 
         match message:
-            case bus.SetState(unique_id=self.unique_id):
-                assert message.state in ["on", "off"]
-                is_on = message.state == "on"
+            case bus.SetValue(unique_id=self.unique_id):
+                assert isinstance(message.value, bool)
 
-                if self.is_on is not is_on:
-                    self.is_on = is_on
+                if self.is_on is not message.value:
+                    self.is_on = message.value
                     LOG.info(
-                        "Managed switch %r state set from Neuron: %r",
+                        "Managed switch %r value set to %r from Neuron",
                         self.unique_id,
-                        message.state,
+                        message.value,
                     )
                     self.schedule_update_ha_state()
 
@@ -102,14 +107,3 @@ class ManagedSwitch(SwitchEntity):
         assert self.unique_id
 
         send_message(self.hass, bus.SwitchTurnedOff(unique_id=self.unique_id))
-
-    #
-    # Registry properties: https://developers.home-assistant.io/docs/core/entity#registry-properties
-    #
-
-    @cached_property
-    def device_info(self):
-        if self.automation:
-            return automation_device_info(self.automation)
-        else:
-            return neuron_device_info()

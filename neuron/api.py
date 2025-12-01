@@ -6,7 +6,8 @@ import asyncio
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from functools import wraps
 from math import floor
 from typing import (
@@ -17,16 +18,16 @@ from typing import (
     Coroutine,
     Iterable,
     Literal,
+    Never,
     Self,
     Sequence,
     TypeAlias,
-    TypeGuard,
-    TypeIs,
     TypeVar,
     cast,
     overload,
 )
 
+from neuron.hass_const import SensorDeviceClass, SensorStateClass
 from neuron.logging import NeuronLogger, get_logger
 from neuron.util import filter_keyword_args
 
@@ -45,9 +46,15 @@ __all__ = [
     "get_logger",
     "Entity",
     "ManagedSwitch",
+    "ManagedSensor",
+    "SensorValue",
     "StateChange",
+    "ValueChange",
     "NeuronLogger",
     "SubscriptionHandle",
+    # Re-export of Home Assistant constants:
+    "SensorDeviceClass",
+    "SensorStateClass",
 ]
 
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
@@ -540,12 +547,12 @@ class ManagedEntity(ABC):
     name: str
     friendly_name: str | None
 
-    _state: str
+    _value: Any  # Depends on the entity type
 
     def __init__(
         self,
         unique_id: str,
-        initial_state: str,
+        initial_value: Any,
         friendly_name: str | None = None,
     ):
         assert unique_id.count(".") == 1, "unique_id must contain 1 period symbol"
@@ -555,9 +562,9 @@ class ManagedEntity(ABC):
         self.friendly_name = friendly_name
 
         if x := _n().state.managed_entity_states.get(unique_id):
-            self._state = x.state
+            self._value = x.value
         else:
-            self._state = initial_state
+            self._value = initial_value
 
         # Only register managed entities while loading an automation, that way
         # Neuron Core can use this API as well.
@@ -565,35 +572,41 @@ class ManagedEntity(ABC):
             _managed_entities[unique_id] = self
 
     @abstractmethod
-    async def _on_change(self, change: StateChange):
+    async def _on_change(self, change: ValueChange):
         raise NotImplementedError("Subclasses should override this method")
 
     @property
-    def state(self) -> str:
-        return self._state
+    def value(self) -> Any:
+        return self._value
 
-    async def set_state(self, state: str, *, suppress_handler: bool = False):
-        """Sets the state of this managed entity and transmits it to the integration"""
+    async def _set_value(self, value: Any, *, suppress_handler: bool = False):
+        """Sets the value of this managed entity and transmits it to the integration
 
-        old_state = self._state
+        If suppress_handler is True, the _on_change handler won't be called.
+        This is used when the automation is disabled, allowing the managed
+        entities to keep working and have the correct value when the
+        automation is resumed.
+        """
 
-        if state == old_state:
+        old_value = self._value
+
+        if value == old_value:
             return
 
-        self._state = state
+        self._value = value
 
         # TODO: Attributes
 
-        await _n().set_managed_entity_state(self.unique_id, state)
+        await _n().set_managed_entity_value(self.unique_id, value)
 
         if not suppress_handler:
             await self._on_change(
                 **filter_keyword_args(
                     self._on_change,
                     {
-                        "change": StateChange(
-                            from_state=old_state,
-                            to_state=state,
+                        "change": ValueChange(
+                            from_value=old_value,
+                            to_value=value,
                         ),
                         "log": _l(),
                     },
@@ -606,15 +619,15 @@ class ManagedSwitch(ManagedEntity):
 
     Usage:
 
-    my_switch = ManagedSwitch("shields_up")
+        my_switch = ManagedSwitch("shields_up")
 
-    @my_switch.turned_on
-    async def my_switch_on(log: NeuronLogger):
-        log.info("Shields are up!")
+        @my_switch.turned_on
+        async def on(log: NeuronLogger):
+            log.info("Shields are up!")
 
-    @my_switch.turned_off
-    async def my_switch_off(log: NeuronLogger):
-        log.info("Shields down")
+        @my_switch.turned_off
+        async def off(log: NeuronLogger):
+            log.info("Shields down")
     """
 
     _turned_on_handler: AsyncFunction | None
@@ -623,34 +636,39 @@ class ManagedSwitch(ManagedEntity):
     def __init__(
         self,
         name: str,
-        initial_state: Literal["on", "off", True, False],
+        initial_value: Literal["on", "off", True, False],
         friendly_name: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
 
-        match initial_state:
-            case True:
-                initial_state = "on"
-            case False:
-                initial_state = "off"
-
         super().__init__(
             unique_id=f"switch.{name}",
-            initial_state=initial_state,
+            initial_value=True if initial_value in [True, "on"] else False,
             friendly_name=friendly_name,
         )
 
-    async def _on_change(self, change: StateChange):
-        assert change.to_state in ["on", "off"]
-        assert change.from_state != change.to_state
+    async def _on_change(self, change: ValueChange[bool]):
+        assert change.from_value != change.to_value
 
-        if change.to_state == "on" and self._turned_on_handler is not None:
+        if change.to_value is True and self._turned_on_handler is not None:
             kwargs = filter_keyword_args(self._turned_on_handler, {"log": _l()})
             await self._turned_on_handler(**kwargs)
 
-        elif change.to_state == "off" and self._turned_off_handler is not None:
+        elif change.to_value is False and self._turned_off_handler is not None:
             kwargs = filter_keyword_args(self._turned_off_handler, {"log": _l()})
             await self._turned_off_handler(**kwargs)
+
+    @property
+    def value(self) -> bool:
+        return self._value
+
+    @property
+    def is_on(self) -> bool:
+        return self._value is True
+
+    @property
+    def is_off(self) -> bool:
+        return self._value is False
 
     @overload
     def turned_on(self, handler: None = None) -> Decorator: ...
@@ -687,10 +705,10 @@ class ManagedSwitch(ManagedEntity):
             return decorator
 
     async def turn_on(self):
-        await self.set_state("on")
+        await self.set_value(True)
 
     async def turn_off(self):
-        await self.set_state("off")
+        await self.set_value(False)
 
     async def toggle(self) -> bool:
         """Toggles the switch and returns the new toggled state"""
@@ -702,18 +720,69 @@ class ManagedSwitch(ManagedEntity):
             await self.turn_on()
             return True
 
-    async def set_state(self, state: str, **kwargs):
-        assert state in ["on", "off"]
+    async def set_value(self, value: Literal[True, "on", False, "off"] | str, **kwargs):
+        """Set the value of the managed switch
 
-        await super().set_state(state, **kwargs)
+        The type also allows "str" to allow setting the value of another
+        switch directly. Just make sure the value is "on" or "off" first!
+        """
+
+        assert value in [True, "on", False, "off"]
+
+        await self._set_value(True if value in [True, "on"] else False, **kwargs)
+
+
+SensorValue: TypeAlias = str | int | float | date | datetime | Decimal
+
+
+class ManagedSensor[T = SensorValue](ManagedEntity):
+    """A sensor entity created and managed by Neuron
+
+    Usage:
+
+        my_sensor = ManagedSensor("price_of_eggs", initial_value=0.12)
+
+        def init():
+            await my_sensor.set_value(999.99)
+
+            # Or
+            await my_sensor.set_state("999.99")
+    """
+
+    _value: T
+
+    def __init__(
+        self,
+        name: str,
+        initial_value: T,
+        friendly_name: str | None = None,
+        device_class: SensorDeviceClass | None = None,
+        state_class: SensorStateClass | None = None,
+        native_unit_of_measurement: str | None = None,
+        suggested_unit_of_measurement: str | None = None,
+    ):
+        assert "." not in name, "Name can not contain period symbol"
+
+        self.device_class = device_class
+        self.state_class = state_class
+        self.native_unit_of_measurement = native_unit_of_measurement
+        self.suggested_unit_of_measurement = suggested_unit_of_measurement
+
+        super().__init__(
+            unique_id=f"sensor.{name}",
+            initial_value=initial_value,
+            friendly_name=friendly_name,
+        )
 
     @property
-    def is_on(self) -> bool:
-        return self._state == "on"
+    def value(self) -> T:
+        return self._value
 
-    @property
-    def is_off(self) -> bool:
-        return self._state == "off"
+    async def set_value(self, value: T, **kwargs):
+        await self._set_value(value, **kwargs)
+
+    async def _on_change(self, change: ValueChange[T]):
+        assert change.from_value != change.to_value
 
 
 @dataclass
@@ -827,6 +896,12 @@ class StateChange:
         #         },
         #     },
         # }
+
+
+@dataclass
+class ValueChange[T = Any]:
+    from_value: T
+    to_value: T
 
 
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]

@@ -10,8 +10,9 @@ from homeassistant.helpers import device_registry as dr
 
 from . import bus
 from .const import DOMAIN
+from .sensor import ManagedSensor
 from .switch import ManagedSwitch
-from .util import neuron_data, neuron_device_info
+from .util import neuron_data, neuron_device_info, send_message
 
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
 
@@ -36,9 +37,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
 
     try:
-        await _sync_from_neuron(hass)
+        for _ in range(10):
+            LOG.info("Sending RequestingFullUpdate message")
+            send_message(hass, bus.RequestingFullUpdate())
+
+            await asyncio.sleep(1)
+
+            if data.entities_created:
+                break
+
+        if not data.entities_created:
+            raise ConfigEntryNotReady("No response from Neuron, try again soon")
     except Exception:
-        LOG.info("Cleaning up event listener")
         data.cleanup_event_listener()
         raise
 
@@ -62,20 +72,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     return True
 
 
-async def _sync_from_neuron(hass):
-    """Gets a full update from Neuron and creates all entities"""
-
-    data = neuron_data(hass)
-
-    LOG.info("Sending RequestingFullUpdate event")
-    hass.bus.async_fire("neuron", bus.RequestingFullUpdate().model_dump())
-
-    await asyncio.sleep(3)
-
-    if not data.entities_created:
-        raise ConfigEntryNotReady("No response from Neuron, try again soon")
-
-
 async def _handle_event(hass: HomeAssistant, event: Event):
     LOG.debug("Received event: %r", event.as_dict())
 
@@ -93,7 +89,7 @@ async def _handle_event(hass: HomeAssistant, event: Event):
             LOG.info("Received full state update from Neuron: %r", message)
             setup_entities(hass, message)
 
-        case bus.SetState():
+        case bus.SetValue():
             pass  # Handled by each entity
 
         case other:
@@ -110,18 +106,27 @@ def setup_neuron_device(hass: HomeAssistant, entry: ConfigEntry):
 def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
     data = neuron_data(hass)
 
-    for x in message.managed_switches:
-        data.add_switches(
-            [
-                ManagedSwitch(
-                    hass,
-                    automation=x.automation,
-                    unique_id=x.unique_id,
-                    state=x.state,
-                    friendly_name=x.friendly_name,
-                )
-            ]
+    data.add_switches(
+        ManagedSwitch(
+            hass,
+            automation=x.automation,
+            unique_id=x.unique_id,
+            value=x.value,
+            friendly_name=x.friendly_name,
         )
+        for x in message.managed_switches
+    )
+
+    data.add_sensors(
+        ManagedSensor(
+            hass,
+            automation=x.automation,
+            unique_id=x.unique_id,
+            value=x.value,
+            friendly_name=x.friendly_name,
+        )
+        for x in message.managed_sensors
+    )
 
     data.entities_created = True
 

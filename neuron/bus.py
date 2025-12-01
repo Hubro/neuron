@@ -6,9 +6,23 @@ That way they share the exact same code for message parsing.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Mapping
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Annotated, Any, Literal, Mapping, TypeAlias
 
 from pydantic import BaseModel, Field, RootModel
+
+try:
+    # Neuron addon:
+    from neuron.api import SensorDeviceClass, SensorStateClass
+except ImportError:
+    # Neuron integration:
+    from homeassistant.components.sensor.const import (
+        SensorDeviceClass,
+        SensorStateClass,
+    )
+
+SensorValue: TypeAlias = str | int | float | date | datetime | Decimal
 
 
 class BaseMessage(BaseModel):
@@ -64,15 +78,15 @@ class FullUpdate(NeuronCoreMessage):
 
     type: Literal["full-update"] = "full-update"
     managed_switches: list[ManagedSwitch]
-    # managed_sensors: list[ManagedSensor]
+    managed_sensors: list[ManagedSensor]
 
 
-class SetState(NeuronCoreMessage):
-    """Tell the integration to set the state of a managed entity"""
+class SetValue(NeuronCoreMessage):
+    """Tell the integration to set the value of a managed entity"""
 
-    type: Literal["set-state"] = "set-state"
+    type: Literal["set-value"] = "set-value"
     unique_id: str
-    state: str
+    value: Any
 
     # TODO: Attributes
 
@@ -81,8 +95,20 @@ class ManagedSwitch(BaseModel):
     unique_id: str
     friendly_name: str
     automation: str | None  # None means that the entity is managed by Neuron core
-    state: str
+    value: bool
     # attributes: dict[str, str]
+
+
+class ManagedSensor(BaseModel):
+    unique_id: str
+    friendly_name: str
+    value: SensorValue
+    automation: str | None  # None means that the entity is managed by Neuron core
+    # attributes: dict[str, str]
+    device_class: SensorDeviceClass | None
+    state_class: SensorStateClass | None
+    native_unit_of_measurement: str | None
+    suggested_unit_of_measurement: str | None
 
 
 #
@@ -91,7 +117,7 @@ class ManagedSwitch(BaseModel):
 
 
 Message = (
-    RequestingFullUpdate | SwitchTurnedOn | SwitchTurnedOff | FullUpdate | SetState
+    RequestingFullUpdate | SwitchTurnedOn | SwitchTurnedOff | FullUpdate | SetValue
 )
 
 

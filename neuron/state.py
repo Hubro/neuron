@@ -96,7 +96,7 @@ class AutomationState:
 
 @dataclass
 class ManagedEntityState:
-    state: str
+    value: Any
     attributes: dict[str, str] = field(default_factory=dict)
 
 

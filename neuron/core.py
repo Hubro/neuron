@@ -16,7 +16,14 @@ from typing_extensions import Sentinel
 import neuron.api
 import neuron.bus
 
-from .api import AsyncFunction, Entity, ManagedEntity, ManagedSwitch, StateChange
+from .api import (
+    AsyncFunction,
+    Entity,
+    ManagedEntity,
+    ManagedSensor,
+    ManagedSwitch,
+    StateChange,
+)
 from .config import Config, load_config
 from .hass import HASS
 from .logging import NeuronLogger, get_logger
@@ -390,7 +397,7 @@ class Neuron:
         automation_enabled = ManagedSwitch(
             f"neuron_automation_{automation.name}_enabled",
             friendly_name=f"Neuron - {automation.name} - Enabled",
-            initial_state=automation.enabled,
+            initial_value=automation.enabled,
         )
         setattr(automation_enabled, "__automation", automation)
 
@@ -601,38 +608,55 @@ class Neuron:
                 # )
 
                 managed_switches = []
+                managed_sensors = []
 
                 for automation, entity in managed_entities():
-                    if entity.domain == "switch":
-                        managed_switches.append(
-                            neuron.bus.ManagedSwitch(
-                                unique_id=entity.unique_id,
-                                friendly_name=entity.friendly_name or entity.name,
-                                state=entity.state,
-                                automation=automation.name if automation else None,
+                    match entity:
+                        case ManagedSwitch():
+                            managed_switches.append(
+                                neuron.bus.ManagedSwitch(
+                                    unique_id=entity.unique_id,
+                                    friendly_name=entity.friendly_name or entity.name,
+                                    value=entity.value,
+                                    automation=automation.name if automation else None,
+                                )
                             )
-                        )
 
-                message = neuron.bus.FullUpdate(managed_switches=managed_switches)
+                        case ManagedSensor():
+                            managed_sensors.append(
+                                neuron.bus.ManagedSensor(
+                                    unique_id=entity.unique_id,
+                                    friendly_name=entity.friendly_name or entity.name,
+                                    value=entity.value,
+                                    automation=automation.name if automation else None,
+                                    device_class=entity.device_class,
+                                    state_class=entity.state_class,
+                                    native_unit_of_measurement=entity.native_unit_of_measurement,
+                                    suggested_unit_of_measurement=entity.suggested_unit_of_measurement,
+                                )
+                            )
+
+                message = neuron.bus.FullUpdate(
+                    managed_switches=managed_switches,
+                    managed_sensors=managed_sensors,
+                )
 
                 LOG.info("Sending full update to Neuron integration | %r", message)
                 await self.send_to_integration(message)
 
             case neuron.bus.SwitchTurnedOff() | neuron.bus.SwitchTurnedOn():
-                new_state = (
-                    "on" if isinstance(message, neuron.bus.SwitchTurnedOn) else "off"
-                )
+                new_value = isinstance(message, neuron.bus.SwitchTurnedOn)
 
                 for automation, managed_entity in managed_entities():
                     match managed_entity:
                         case ManagedSwitch(unique_id=message.unique_id):
-                            old_state = managed_entity.state
+                            old_value = managed_entity.value
 
-                            if new_state == old_state:
+                            if new_value == old_value:
                                 break
 
-                            await managed_entity.set_state(
-                                new_state,
+                            await managed_entity.set_value(
+                                new_value,
                                 suppress_handler=(
                                     automation and not automation.initialized
                                 ),
@@ -646,20 +670,19 @@ class Neuron:
         LOG.debug("Sending message to integration: %r", message)
         await self.hass.fire_event("neuron", data=message.model_dump())
 
-    # TODO: Attributes
-    async def set_managed_entity_state(self, entity_id: str, state: str):
-        LOG.debug("Setting state of managed entity %r to %r", entity_id, state)
+    async def set_managed_entity_value(self, entity_id: str, value: Any):
+        LOG.debug("Setting value of managed entity %r to %r", entity_id, value)
 
         if x := self.state.managed_entity_states.get(entity_id):
-            if x.state == state:
+            if x.value == value:
                 return  # State unchanged
 
-            x.state = state
+            x.value = value
         else:
-            self.state.managed_entity_states[entity_id] = ManagedEntityState(state)
+            self.state.managed_entity_states[entity_id] = ManagedEntityState(value)
 
         await self.send_to_integration(
-            neuron.bus.SetState(unique_id=entity_id, state=state)
+            neuron.bus.SetValue(unique_id=entity_id, value=value)
         )
 
         self.state.save()
