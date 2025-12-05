@@ -38,8 +38,9 @@ __all__ = [
     "on_state_change",
     "on_trigger",
     "on_event",
-    "unsubscribe",
+    "on_time_pattern",
     "daily",
+    "unsubscribe",
     "action",
     "turn_on",
     "turn_off",
@@ -241,14 +242,54 @@ def on_event(event: str = "*", **filter: Any):
     return decorator
 
 
-async def unsubscribe(handle: SubscriptionHandle):
-    """Unsubscribe from an event using the handle returned from the subscribe function"""
+@overload
+def on_time_pattern(
+    *,
+    hours: str | int | None = ...,
+    minutes: str | int | None = ...,
+    seconds: str | int | None = ...,
+) -> Decorator[AsyncFunction]: ...
 
-    event_or_trigger, handler = handle
 
-    _l().info("Unsubscribing handler %r from %r", handler.__name__, event_or_trigger)
+@overload
+def on_time_pattern(
+    *,
+    hours: str | int | None = ...,
+    minutes: str | int | None = ...,
+    seconds: str | int | None = ...,
+    handler: None,
+) -> Decorator[AsyncFunction]: ...
 
-    await _n().unsubscribe(handler, event_or_trigger)
+
+@overload
+def on_time_pattern(
+    *,
+    hours: str | int | None = ...,
+    minutes: str | int | None = ...,
+    seconds: str | int | None = ...,
+    handler: AsyncFunction,
+) -> Coroutine[None, None, SubscriptionHandle]: ...
+
+
+def on_time_pattern(
+    *,
+    hours: str | int | None = None,
+    minutes: str | int | None = None,
+    seconds: str | int | None = None,
+    handler: AsyncFunction | None = None,
+):
+    assert not all([hours is None, minutes is None, seconds is None])
+
+    trigger: dict[str, str | int] = {"trigger": "time_pattern"}
+
+    if hours:
+        trigger["hours"] = hours
+    if minutes:
+        trigger["minutes"] = minutes
+    if seconds:
+        trigger["seconds"] = seconds
+
+    return on_trigger(trigger, handler=handler)
 
 
 @overload
@@ -265,6 +306,16 @@ def daily(at: str, handler: AsyncFunction | None = None):
     trigger = {"trigger": "time", "at": at}
 
     return on_trigger(trigger, handler=handler)
+
+
+async def unsubscribe(handle: SubscriptionHandle):
+    """Unsubscribe from an event using the handle returned from the subscribe function"""
+
+    event_or_trigger, handler = handle
+
+    _l().info("Unsubscribing handler %r from %r", handler.__name__, event_or_trigger)
+
+    await _n().unsubscribe(handler, event_or_trigger)
 
 
 async def action(
@@ -540,6 +591,7 @@ class Entity:
         await self.action("stop_cover", data=data)
 
 
+# TODO: Allow managed entities to be created at runtime
 class ManagedEntity(ABC):
     """Base class for entities created and managed by Neuron"""
 
