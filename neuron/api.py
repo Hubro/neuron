@@ -652,11 +652,15 @@ class ManagedSwitch(ManagedEntity):
         assert change.from_value != change.to_value
 
         if change.to_value is True and self._turned_on_handler is not None:
-            kwargs = filter_keyword_args(self._turned_on_handler, {"log": _l()})
+            kwargs = filter_keyword_args(
+                self._turned_on_handler, {"log": _l(), "switch": self}
+            )
             await self._turned_on_handler(**kwargs)
 
         elif change.to_value is False and self._turned_off_handler is not None:
-            kwargs = filter_keyword_args(self._turned_off_handler, {"log": _l()})
+            kwargs = filter_keyword_args(
+                self._turned_off_handler, {"log": _l(), "switch": self}
+            )
             await self._turned_off_handler(**kwargs)
 
     @property
@@ -672,12 +676,13 @@ class ManagedSwitch(ManagedEntity):
         return self._value is False
 
     @overload
-    def turned_on(self, handler: None = None) -> Decorator: ...
+    def when_turned_on(self, handler: None = None) -> Decorator: ...
 
     @overload
-    def turned_on(self, handler: AsyncFunction) -> None: ...
+    def when_turned_on(self, handler: AsyncFunction) -> None: ...
 
-    def turned_on(self, handler: AsyncFunction | None = None):
+    # Rename to "when_turned_on"?
+    def when_turned_on(self, handler: AsyncFunction | None = None):
         def decorator(handler: AsyncFunction, /):
             self._turned_on_handler = handler
 
@@ -689,12 +694,12 @@ class ManagedSwitch(ManagedEntity):
             return decorator
 
     @overload
-    def turned_off(self, handler: None = None) -> Decorator: ...
+    def when_turned_off(self, handler: None = None) -> Decorator: ...
 
     @overload
-    def turned_off(self, handler: AsyncFunction) -> None: ...
+    def when_turned_off(self, handler: AsyncFunction) -> None: ...
 
-    def turned_off(self, handler: AsyncFunction | None = None):
+    def when_turned_off(self, handler: AsyncFunction | None = None):
         def decorator(handler: AsyncFunction, /):
             self._turned_off_handler = handler
 
