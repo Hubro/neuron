@@ -18,7 +18,6 @@ from typing import (
     Coroutine,
     Iterable,
     Literal,
-    Never,
     Self,
     Sequence,
     TypeAlias,
@@ -27,6 +26,7 @@ from typing import (
     overload,
 )
 
+from neuron.debounce import debounce
 from neuron.hass_const import SensorDeviceClass, SensorStateClass
 from neuron.logging import NeuronLogger, get_logger
 from neuron.util import filter_keyword_args
@@ -44,6 +44,7 @@ __all__ = [
     "turn_on",
     "turn_off",
     "get_logger",
+    "debounce",
     "Entity",
     "ManagedSwitch",
     "ManagedSensor",
