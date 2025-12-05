@@ -624,6 +624,9 @@ class ManagedEntity(ABC):
         if _automation.get(None):
             _managed_entities[unique_id] = self
 
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} {self.unique_id!r}>"
+
     @abstractmethod
     async def _on_change(self, change: ValueChange):
         raise NotImplementedError("Subclasses should override this method")

@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, assert_never, cast, overload
+from typing import Any, Callable, Iterator, assert_never, overload
 
 from typing_extensions import Sentinel
 
@@ -17,7 +17,6 @@ import neuron.api
 import neuron.bus
 
 from .api import (
-    AsyncFunction,
     Entity,
     ManagedEntity,
     ManagedSensor,
@@ -401,11 +400,11 @@ class Neuron:
         )
         setattr(automation_enabled, "__automation", automation)
 
-        @automation_enabled.turned_on
+        @automation_enabled.when_turned_on
         async def on():
             await self.enable_automation(automation)
 
-        @automation_enabled.turned_off
+        @automation_enabled.when_turned_off
         async def off():
             await self.disable_automation(automation)
 
@@ -1202,7 +1201,7 @@ class Automation:
                 if "a" in diff:
                     entity._attributes.update(diff["a"])
 
-                self.logger.debug("Updated entity state: %r", entity)
+                self.logger.debug("Entity state updated: %r", entity)
             else:
                 entity._state = state_object["s"]
                 entity._attributes = state_object["a"]
