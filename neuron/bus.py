@@ -64,6 +64,14 @@ class SwitchTurnedOff(NeuronIntegrationMessage):
     unique_id: str
 
 
+class ButtonPressed(NeuronIntegrationMessage):
+    """Informs Neuron that a managed button was pressed"""
+
+    type: Literal["button-pressed"] = "button-pressed"
+
+    unique_id: str
+
+
 #
 # Messages from Neuron core
 #
@@ -79,6 +87,7 @@ class FullUpdate(NeuronCoreMessage):
     type: Literal["full-update"] = "full-update"
     managed_switches: list[ManagedSwitch]
     managed_sensors: list[ManagedSensor]
+    managed_buttons: list[ManagedButton]
 
 
 class SetValue(NeuronCoreMessage):
@@ -93,7 +102,7 @@ class SetValue(NeuronCoreMessage):
 
 class ManagedSwitch(BaseModel):
     unique_id: str
-    friendly_name: str
+    friendly_name: str | None
     automation: str | None  # None means that the entity is managed by Neuron core
     value: bool
     # attributes: dict[str, str]
@@ -101,14 +110,20 @@ class ManagedSwitch(BaseModel):
 
 class ManagedSensor(BaseModel):
     unique_id: str
-    friendly_name: str
+    friendly_name: str | None
     value: SensorValue
-    automation: str | None  # None means that the entity is managed by Neuron core
     # attributes: dict[str, str]
+    automation: str | None  # None means that the entity is managed by Neuron core
     device_class: SensorDeviceClass | None
     state_class: SensorStateClass | None
     native_unit_of_measurement: str | None
     suggested_unit_of_measurement: str | None
+
+
+class ManagedButton(BaseModel):
+    unique_id: str
+    friendly_name: str | None
+    automation: str | None  # None means that the entity is managed by Neuron core
 
 
 #
@@ -117,7 +132,12 @@ class ManagedSensor(BaseModel):
 
 
 Message = (
-    RequestingFullUpdate | SwitchTurnedOn | SwitchTurnedOff | FullUpdate | SetValue
+    RequestingFullUpdate
+    | SwitchTurnedOn
+    | SwitchTurnedOff
+    | ButtonPressed
+    | FullUpdate
+    | SetValue
 )
 
 

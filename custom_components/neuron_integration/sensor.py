@@ -34,7 +34,7 @@ class ManagedSensor(SensorEntity):
         automation: str | None,
         unique_id: str,
         value: StateType | datetime | date | Decimal,
-        friendly_name: str,
+        friendly_name: str | None,
     ) -> None:
         self.hass = hass
         self.automation = automation

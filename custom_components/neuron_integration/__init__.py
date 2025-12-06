@@ -9,6 +9,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 
 from . import bus
+from .button import ManagedButton
 from .const import DOMAIN
 from .sensor import ManagedSensor
 from .switch import ManagedSwitch
@@ -30,6 +31,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     if not data.add_switch_entities:
         await hass.config_entries.async_forward_entry_setups(entry, ["switch"])
+    if not data.add_button_entities:
+        await hass.config_entries.async_forward_entry_setups(entry, ["button"])
 
     data.cleanup_event_listener = hass.bus.async_listen(
         "neuron",
@@ -126,6 +129,16 @@ def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
             friendly_name=x.friendly_name,
         )
         for x in message.managed_sensors
+    )
+
+    data.add_buttons(
+        ManagedButton(
+            hass,
+            automation=x.automation,
+            unique_id=x.unique_id,
+            friendly_name=x.friendly_name,
+        )
+        for x in message.managed_buttons
     )
 
     data.entities_created = True

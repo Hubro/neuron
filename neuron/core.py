@@ -18,6 +18,7 @@ import neuron.bus
 
 from .api import (
     Entity,
+    ManagedButton,
     ManagedEntity,
     ManagedSensor,
     ManagedSwitch,
@@ -608,6 +609,7 @@ class Neuron:
 
                 managed_switches = []
                 managed_sensors = []
+                managed_buttons = []
 
                 for automation, entity in managed_entities():
                     match entity:
@@ -635,9 +637,19 @@ class Neuron:
                                 )
                             )
 
+                        case ManagedButton():
+                            managed_buttons.append(
+                                neuron.bus.ManagedButton(
+                                    unique_id=entity.unique_id,
+                                    friendly_name=entity.friendly_name,
+                                    automation=automation.name if automation else None,
+                                )
+                            )
+
                 message = neuron.bus.FullUpdate(
                     managed_switches=managed_switches,
                     managed_sensors=managed_sensors,
+                    managed_buttons=managed_buttons,
                 )
 
                 LOG.info("Sending full update to Neuron integration | %r", message)
@@ -660,6 +672,16 @@ class Neuron:
                                     automation and not automation.initialized
                                 ),
                             )
+                            break
+
+            case neuron.bus.ButtonPressed():
+                for automation, managed_entity in managed_entities():
+                    match managed_entity:
+                        case neuron.api.ManagedButton(unique_id=message.unique_id):
+                            if automation and not automation.initialized:
+                                return
+
+                            await managed_entity.press()
                             break
 
             case other:

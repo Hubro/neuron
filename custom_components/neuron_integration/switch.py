@@ -35,7 +35,7 @@ class ManagedSwitch(SwitchEntity):
         automation: str | None,
         unique_id: str,
         value: bool,
-        friendly_name: str,
+        friendly_name: str | None,
     ) -> None:
         self.hass = hass
         self.automation = automation
