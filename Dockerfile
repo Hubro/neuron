@@ -1,33 +1,21 @@
-FROM python:3.13-alpine
+# NB: Root user appears to be required in order to read the addon settings
 
-RUN apk add build-base   # For building Python dependencies
-
-RUN pip --isolated --no-cache-dir install poetry && \
-    mkdir /app
-
-# Seems like Home Assistant Addons need to run as root, otherwise they can't
-# read their own options. Doesn't seem to be a way around it.
-#
-# RUN adduser -H -S -D neuron && \
-#     id neuron && \
-#     chown neuron /app
-# 
-# USER neuron
-
+FROM ghcr.io/astral-sh/uv:python3.13-alpine
 WORKDIR /app
 
-ENV POETRY_CONFIG_DIR=/app/.poetry/config
-ENV POETRY_DATA_DIR=/app/.poetry/data
-ENV POETRY_CACHE_DIR=/app/.poetry/cache
-COPY pyproject.toml poetry.lock ./
-RUN poetry install --no-root --without=dev
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV UV_TOOL_BIN_DIR=/usr/local/bin
 
-COPY . ./
-RUN poetry install --only-root
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project --no-dev
 
-# Poetry overrides PYTHONPATH, so this doesn't work :(
-# ENV PYTHONPATH="/config"
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev
 
-ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
 
-ENTRYPOINT [ "poetry", "run", "python", "-m", "neuron" ]
+ENTRYPOINT [ "uv", "run", "python", "-m", "neuron" ]
