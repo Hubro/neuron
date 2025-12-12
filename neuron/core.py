@@ -942,6 +942,8 @@ class Subscriptions:
             for subscription in self._automation_map[automation]:
                 del subscription[automation]
 
+            del self._automation_map[automation]
+
         else:
             subscription = key
 
