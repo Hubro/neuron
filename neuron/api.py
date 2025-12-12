@@ -616,8 +616,18 @@ class ManagedEntity(ABC):
         self.friendly_name = friendly_name
 
         if x := _n().state.managed_entity_states.get(unique_id):
+            _l().info(
+                "Setting up managed entity %r with value from persistent state %r",
+                unique_id,
+                x.value,
+            )
             self._value = x.value
         else:
+            _l().info(
+                "Setting up managed entity %r with initial value (%r)",
+                unique_id,
+                initial_value,
+            )
             self._value = initial_value
 
         # Only register managed entities while loading an automation, that way

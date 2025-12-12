@@ -5,6 +5,7 @@ import asyncio
 import importlib
 import sys
 from contextlib import contextmanager
+from contextvars import copy_context
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -259,22 +260,24 @@ class Neuron:
                 # full kwargs dict so it can be used for filtering
                 if handler_is_event_wrapper:
                     kwargs["handler_kwargs"] = handler_kwargs
-                    logger.trace(
-                        "Executing event handler wrapper for: %s", handler_name
-                    )
-                    logger.trace("Handler arguments: %r", handler_kwargs)
+                    LOG.trace("Executing event handler wrapper for: %s", handler_name)
+                    LOG.trace("Handler arguments: %r", handler_kwargs)
 
                 else:
-                    logger.debug("Executing handler: %s", handler_name)
-                    logger.trace("Handler arguments: %r", handler_kwargs)
+                    LOG.debug("Executing handler: %s", handler_name)
+                    LOG.trace("Handler arguments: %r", handler_kwargs)
 
-                if automation is NEURON_CORE:
-                    coro = handler(**kwargs)
-                else:
+                context = copy_context()
+
+                if automation is not NEURON_CORE:
                     with automation.api_context():
-                        coro = handler(**kwargs)
+                        context = copy_context()
 
-                asyncio.create_task(coro, name=f"neutron_event-{id}-handler")
+                asyncio.create_task(
+                    handler(**kwargs),
+                    name=f"neutron_event-{id}-handler",
+                    context=context,
+                )
             except Exception:
                 logger.exception(
                     "Failed to execute subscription handler %r", handler_name
