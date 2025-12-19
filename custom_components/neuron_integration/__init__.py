@@ -18,21 +18,18 @@ from .util import neuron_data, neuron_device_info, send_message
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
 
 LOG = logging.getLogger(__name__)
+PLATFORMS = ["switch", "sensor", "button"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    # config={'created_at': '2025-10-01T22:22:48.588577+00:00', 'data': {'addon': 'Neuron'}, 'discovery_keys': {'hassio': (DiscoveryKey(domain='hassio', key='be7bc7f728b3492b90e10cb61d2ecbe4', version=1),)}, 'disabled_by': None, 'domain': 'neuron', 'entry_id': '01K6GXXY8C4FQAPFTEVPN6NK27', 'minor_version': 0, 'modified_at': '2025-10-01T22:22:48.588591+00:00', 'options': {}, 'pref_disable_new_entities': False, 'pref_disable_polling': False, 'source': 'hassio', 'subentries': [], 'title': 'Neuron', 'unique_id': 'neuron', 'version': 0}
     LOG.info("Setting up Neuron integration")
 
     setup_neuron_device(hass, entry)
 
     data = neuron_data(hass)
-    if not data.add_sensor_entities:
-        await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
-    if not data.add_switch_entities:
-        await hass.config_entries.async_forward_entry_setups(entry, ["switch"])
-    if not data.add_button_entities:
-        await hass.config_entries.async_forward_entry_setups(entry, ["button"])
+
+    if platforms := set(PLATFORMS) - data.platforms_initialized:
+        await hass.config_entries.async_forward_entry_setups(entry, platforms)
 
     data.cleanup_event_listener = hass.bus.async_listen(
         "neuron",
@@ -68,9 +65,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         LOG.info("Cleaning up event listener")
         data.cleanup_event_listener()
 
-    await teardown_entities(hass)
-
-    await hass.config_entries.async_unload_platforms(entry, ["switch", "sensor"])
+    await hass.config_entries.async_unload_platforms(
+        entry, ["switch", "sensor", "button"]
+    )
 
     return True
 
@@ -142,10 +139,3 @@ def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
     )
 
     data.entities_created = True
-
-
-async def teardown_entities(hass: HomeAssistant):
-    data = neuron_data(hass)
-
-    for switch in data.switches:
-        await switch.async_remove()

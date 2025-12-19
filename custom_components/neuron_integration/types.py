@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 @dataclass
 class NeuronIntegrationData:
     cleanup_event_listener: Callable[..., Any] | None = None
+    platforms_initialized: set[str] = field(default_factory=set)
     add_switch_entities: AddEntitiesCallback | None = None
     add_sensor_entities: AddEntitiesCallback | None = None
     add_button_entities: AddEntitiesCallback | None = None
@@ -20,7 +21,6 @@ class NeuronIntegrationData:
     sensors: list[SensorEntity] = field(default_factory=list)
     buttons: list[ButtonEntity] = field(default_factory=list)
     # binary_sensors: list[BinarySensorEntity] = field(default_factory=list)
-    # buttons: list[ButtonEntity] = field(default_factory=list)
     entities_created: bool = False
 
     def add_switches(self, switches: Iterable[SwitchEntity]):

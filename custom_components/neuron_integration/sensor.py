@@ -25,6 +25,7 @@ async def async_setup_entry(
 
     data = neuron_data(hass)
     data.add_sensor_entities = async_add_entities
+    data.platforms_initialized.add("sensor")
 
 
 class ManagedSensor(SensorEntity):

@@ -25,6 +25,7 @@ async def async_setup_entry(
 
     data = neuron_data(hass)
     data.add_button_entities = async_add_entities
+    data.platforms_initialized.add("button")
 
 
 class ManagedButton(ButtonEntity):
