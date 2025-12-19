@@ -27,9 +27,11 @@ from .api import (
 )
 from .config import Config, load_config
 from .hass import HASS
+from .hass_state_proxy import HASSStateProxy
 from .logging import NeuronLogger, get_logger
 from .state import AutomationState, ManagedEntityState, NeuronState
 from .util import (
+    bust_cached_props,
     filter_keyword_args,
     stringify,
     terse_module_path,
@@ -47,6 +49,7 @@ NEURON_CORE = Sentinel("NEURON_CORE")
 class Neuron:
     config: Config
     hass: HASS
+    hass_state_proxy: HASSStateProxy
     automations: dict[str, Automation]
     packages: list[Path]  # Packages we've loaded automations from
     tasks: list[asyncio.Task]
@@ -65,6 +68,7 @@ class Neuron:
         self.packages = []
         self.config = load_config()
         self.hass = HASS(self.config.hass_websocket_uri, self.config.hass_api_token)
+        self.hass_state_proxy = HASSStateProxy(self.hass)
         self.tasks = []
         self.subscriptions = Subscriptions()
         self.managed_entities = []
@@ -86,6 +90,7 @@ class Neuron:
         start_task(self.event_subscription_handler_task)
         start_task(self.auto_reload_automations_task)
         start_task(self._stop.wait, name="neuron_wait-for-stop-signal")
+        start_task(self.hass_state_proxy.run, name="neuron_hass-state-proxy")
 
         neuron.api._reset()
         neuron.api._neuron = self  # Any API usage will now target this Neuron instance
@@ -216,10 +221,7 @@ class Neuron:
                     handler_kwargs["trigger"] = trigger
 
         elif is_entities:
-            a = event_msg["event"].get("a")
-            c = event_msg["event"].get("c")
-
-            handler_kwargs["entity_states"] = a or c
+            raise RuntimeError("Neuron core got a state update event")
 
         else:
             raise RuntimeError("Unrecognized event message: %r", event_msg)
@@ -236,11 +238,6 @@ class Neuron:
             )
             return
 
-        # FIXME: Quick dirty hack, fix ASAP!
-        object.__setattr__(
-            self.subscriptions[id], "last_message", {**event_msg, "id": id}
-        )
-
         for automation, handler in handlers:
             # In case the handler was unsubscribed in a previous iteration
             if (automation, handler) not in self.subscriptions[id].handlers:
@@ -250,7 +247,7 @@ class Neuron:
 
             handler_kwargs["log"] = logger
 
-            handler_name = handler.__name__
+            handler_name = handler.__qualname__
             handler_is_event_wrapper = getattr(handler, "_event_handler_wrapper", False)
 
             try:
@@ -332,6 +329,12 @@ class Neuron:
 
         self._ready.set()
 
+        # Send the integration a full update just in case. That way, we can
+        # always be sure the integration is up-to-date after restarting the
+        # Neuron addon.
+        # FIXME: Move full update logic to a separate function
+        await self.send_to_integration(neuron.bus.RequestingFullUpdate())  # pyright: ignore[reportArgumentType]
+
     async def reload_automations(self, module_paths: list[str]):
         """Reloads the given automation module paths"""
 
@@ -392,10 +395,12 @@ class Neuron:
             await self.init_automation(automation)
 
             if automation.initialized:
-                LOG.info("Automation loaded and initialized successfully")
+                LOG.info(
+                    f"Automation {automation.name!r} loaded and initialized successfully"
+                )
 
         else:
-            LOG.info("Automation loaded but is disabled")
+            LOG.info(f"Automation {automation.name!r} loaded but is disabled")
 
         automation_enabled = ManagedSwitch(
             f"neuron_automation_{automation.name}_enabled",
@@ -438,16 +443,13 @@ class Neuron:
             return
 
         LOG.debug("Awaiting initial entity states before proceeding")
-        for entity in automation.entities.values():
-            try:
-                async with asyncio.timeout(3.0):
-                    await entity.initialized.wait()
-            except asyncio.TimeoutError:
-                automation.logger.error(
-                    f"Timed out waiting for the initial state of {entity.entity_id!r}, perhaps it doesn't exist?"
-                )
-                await self.remove_automation_subscriptions(automation)
-                return
+        entity_ids = set(automation.entities.keys())
+        try:
+            await self.hass_state_proxy.wait_for_states(entity_ids)
+        except ValueError:
+            automation.logger.exception("Failed getting initial entity states")
+            await self.remove_automation_subscriptions(automation)
+            return
 
         if hasattr(automation.module, "init"):
             LOG.debug("Executing the automation's init function")
@@ -533,17 +535,13 @@ class Neuron:
         for event, handler in automation.event_handlers:
             await self.subscribe(automation, handler, to=event)
 
-        if automation.entities:
-            for entity in automation.entities.values():
-                await self.subscribe(
-                    automation,
-                    automation.subscribe_entities_handler,
-                    to=[entity],
-                )
+        await self.hass_state_proxy.add(automation, automation.entities.keys())
 
     async def remove_automation_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:
             del self.subscriptions[automation]
+
+        await self.hass_state_proxy.remove(automation)
 
         await self.prune_subscriptions()
 
@@ -716,7 +714,7 @@ class Neuron:
         automation: Automation | NEURON_CORE,
         handler: Callable,
         *,
-        to: str | dict[str, Any] | list[Entity],
+        to: str | dict[str, Any],
     ):
         subscription = self.subscriptions.get(to)
 
@@ -724,26 +722,14 @@ class Neuron:
             if isinstance(to, str):
                 event = to
                 id = await self.hass.subscribe_to_events(event)
-                subscription = Subscription(id, event=event)
-            elif isinstance(to, dict):
+            else:
                 trigger = to
                 id = await self.hass.subscribe_to_trigger(trigger)
-                subscription = Subscription(id, trigger=trigger)
-            else:
-                entities = to
-                id = await self.hass.subscribe_to_entities(entities)
-                subscription = Subscription(id, entities=entities)
+
+            subscription = Subscription(id, to)
 
         subscription.add_handler(automation, handler)
         self.subscriptions.add(subscription)
-
-        # FIXME: Reusing entity state subscription doesn't work, since we rely
-        # on the initial state being sent by Home Assistant right after we
-        # subscribe. If we reuse an existing subscription, we don't get that
-        # initial state. This is a disgusting dirty hack and should be replaced
-        # with a proper design ASAP:
-        if subscription.last_message is not None:
-            await self.dispatch_event(subscription.last_message)
 
     async def unsubscribe(self, handler: Callable, event_or_trigger: str | dict):
         """Unsubscribes a handler from an event or trigger"""
@@ -803,22 +789,31 @@ class Neuron:
             for name, automation in self.automations.items()
         }
 
+        def subscription_handlers(sub: Subscription):
+            handlers = {}
+
+            for subscriber, handler in sub.handlers:
+                key = (
+                    subscriber.name
+                    if isinstance(subscriber, Automation)
+                    else "NEURON_CORE"
+                )
+                handlers.setdefault(key, []).append(repr(handler))
+
+            return handlers
+
         neuron["subscriptions"] = {
             f"{subscription.id}": {
                 "subject": subscription.subject,
                 "automations": [a.name for a in subscription.automations],
-                "handlers": [
-                    [
-                        subscriber.name
-                        if subscriber is not NEURON_CORE
-                        else "NEURON_CORE",
-                        handler.__qualname__,
-                    ]
-                    for subscriber, handler in subscription.handlers
-                ],
+                "handlers": subscription_handlers(subscription),
             }
             for subscription in sorted(self.subscriptions)
         }
+
+        neuron["hass_state_proxy"] = self.hass_state_proxy._dump_state()
+
+        neuron["hass"] = self.hass._dump_state()
 
         with open("neuron-dump.json", "wb") as f:
             f.write(
@@ -837,37 +832,23 @@ class Subscriptions:
         # Maps HASS subscription ID to Subscription
         self._subscriptions: dict[int, Subscription] = {}
 
-        # Maps event/trigger/entities to subscription. Since events are
-        # strings, triggers are objects and entity lists are lists, there is no
-        # overlap between subscription types.
-        self._reverse_map: dict[str, Subscription] = {}
-
-        self._automation_map: dict[Automation | NEURON_CORE, set[Subscription]] = {}
-
     def __iter__(self) -> Iterator[Subscription]:
         """Iterate over all subscriptions
 
-        The subscriptions are yielded in the order they should be processed.
-        Entity state subscriptions first, then events, then triggers. This
-        order ensures that all entities have the right state when trigger/event
-        handlers are executed.
+        Event subscriptions are yielded before trigger subscriptions.
         """
 
         def sort_key(sub: Subscription):
-            if sub.entities:
+            if isinstance(sub.subject, str):
                 return 1
-            elif sub.event:
-                return 2
             else:
-                return 3
+                return 2
 
         for subscription in sorted(self._subscriptions.values(), key=sort_key):
             yield subscription
 
     @overload
-    def __getitem__(
-        self, key: int | str | dict[str, Any] | list[Entity]
-    ) -> Subscription:
+    def __getitem__(self, key: int | str | dict[str, Any]) -> Subscription:
         """Returns a subscription by its ID or event/trigger"""
         ...
 
@@ -882,7 +863,7 @@ class Subscriptions:
         ...
 
     def __getitem__(
-        self, key: int | str | dict[str, Any] | Automation | NEURON_CORE | list[Entity]
+        self, key: int | str | dict[str, Any] | Automation | NEURON_CORE
     ) -> Subscription | set[Subscription]:
         if isinstance(key, int):
             return self._subscriptions[key]
@@ -890,14 +871,12 @@ class Subscriptions:
             return self._reverse_map[key]
         elif isinstance(key, dict):
             return self._reverse_map[stringify(key)]
-        elif isinstance(key, list):
-            return self._reverse_map[stringify([x.entity_id for x in key])]
         else:
             return self._automation_map[key].copy()
 
     @overload
     def get[T](
-        self, key: int | str | dict[str, Any] | list[Entity], default: T = None
+        self, key: int | str | dict[str, Any], default: T = None
     ) -> Subscription | T:
         """Returns a subscription by its ID or event/trigger"""
         ...
@@ -914,7 +893,7 @@ class Subscriptions:
 
     def get[T](
         self,
-        key: int | str | dict[str, Any] | list[Entity] | Automation | NEURON_CORE,
+        key: int | str | dict[str, Any] | Automation | NEURON_CORE,
         default: T = None,
     ) -> Subscription | set[Subscription] | T:
         try:
@@ -923,7 +902,7 @@ class Subscriptions:
             return default
 
     def __contains__(
-        self, key: int | str | list[Entity] | dict[str, Any] | Automation | NEURON_CORE
+        self, key: int | str | dict[str, Any] | Automation | NEURON_CORE
     ) -> bool:
         if isinstance(key, int):
             return key in self._subscriptions
@@ -931,8 +910,6 @@ class Subscriptions:
             return key in self._reverse_map
         elif isinstance(key, dict):
             return stringify(key) in self._reverse_map
-        elif isinstance(key, list):
-            return stringify([x.entity_id for x in key]) in self._reverse_map
         else:
             return key in self._automation_map
 
@@ -944,9 +921,6 @@ class Subscriptions:
 
             for subscription in self._automation_map[automation]:
                 del subscription[automation]
-
-            del self._automation_map[automation]
-
         else:
             subscription = key
 
@@ -954,21 +928,41 @@ class Subscriptions:
                 subscription = self._subscriptions[subscription]
 
             del self._subscriptions[subscription.id]
-            del self._reverse_map[subscription.key]
 
-            for automation, automation_subs in list(self._automation_map.items()):
-                if subscription in automation_subs:
-                    automation_subs.remove(subscription)
+        bust_cached_props(self, "_automation_map", "_reverse_map")
 
-                if not automation_subs:
-                    del self._automation_map[automation]
+    @cached_property
+    def _reverse_map(self) -> dict[str, Subscription]:
+        """Returns a mapping of subscription subject to subscriptions"""
+
+        map = {}
+
+        for subscription in self._subscriptions.values():
+            map[subscription.key] = subscription
+
+        return map
+
+    @cached_property
+    def _automation_map(self) -> dict[Automation | NEURON_CORE, set[Subscription]]:
+        """Returns a mapping of automations (or Neuron core) to their subscriptions"""
+
+        map: dict[Automation | NEURON_CORE, set[Subscription]] = {}
+
+        for subscription in self._subscriptions.values():
+            for automation in subscription.automations:
+                map.setdefault(automation, set()).add(subscription)
+            if NEURON_CORE in subscription:
+                map.setdefault(NEURON_CORE, set()).add(subscription)
+
+        return map
 
     def add(self, subscription: Subscription):
         self._subscriptions[subscription.id] = subscription
-        self._reverse_map[subscription.key] = subscription
 
         for automation in subscription.automations:
             self._automation_map.setdefault(automation, set()).add(subscription)
+
+        bust_cached_props(self, "_automation_map", "_reverse_map")
 
 
 @dataclass(frozen=True)
@@ -976,22 +970,11 @@ class Subscription:
     """Represents a single active HASS event subscription, can have many handlers"""
 
     id: int  # Subscription ID from HASS
-    event: str | None = None  # Provide if event subscription
-    trigger: dict | None = None  # Provide if trigger subscription
-    entities: list[Entity] | None = None  # Provide if entities subscription
-
-    last_message: Any | None = None  # FIXME: Quick dirty fix, delete ASAP
+    subject: str | dict  # The thing subscribed to, either an event or a trigger
 
     _handlers: dict[Automation | NEURON_CORE, list[Callable]] = field(
         default_factory=dict
     )
-
-    def __post_init__(self):
-        if (
-            len([x for x in [self.event, self.trigger, self.entities] if x is not None])
-            != 1
-        ):
-            raise ValueError("Must set either 'event', 'trigger' or 'entities'")
 
     def __hash__(self) -> int:
         return hash(self.id)
@@ -1012,25 +995,21 @@ class Subscription:
     @overload
     def __getitem__(self, automation: Automation) -> list[Callable]:
         """Returns all the handlers for this subscription from the given automation"""
-        ...
 
     @overload
     def __getitem__(self, automation: NEURON_CORE) -> list[Callable]:
         """Returns all Neuron internal handlers for this subscription"""
-        ...
 
     def __getitem__(self, automation: Automation | NEURON_CORE) -> list[Callable]:
         return self._handlers[automation]
 
     @overload
     def __contains__(self, automation: Automation) -> bool:
-        """Returns True if the subscription has any internal Neuron handlers"""
-        return automation in self._handlers
+        """Returns True if the subscription has any handlers from the given automation"""
 
     @overload
     def __contains__(self, automation: NEURON_CORE) -> bool:
-        """Returns True if the subscription has any handlers from the given automation"""
-        return automation in self._handlers
+        """Returns True if the subscription has any internal Neuron handlers"""
 
     def __contains__(self, automation: Automation | NEURON_CORE) -> bool:
         return automation in self._handlers
@@ -1038,12 +1017,10 @@ class Subscription:
     @overload
     def __delitem__(self, x: Automation | NEURON_CORE):
         """Deletes the handlers from the given automation"""
-        ...
 
     @overload
     def __delitem__(self, x: Callable):
         """Deletes the given handler from this subscription"""
-        ...
 
     def __delitem__(self, x: Automation | NEURON_CORE | Callable):
         if isinstance(x, Automation) or x is NEURON_CORE:
@@ -1059,12 +1036,10 @@ class Subscription:
     @overload
     def get[T](self, automation: Automation, default: T = None) -> list[Callable] | T:
         """Returns all the handlers for this subscription from the given automation"""
-        ...
 
     @overload
     def get[T](self, automation: NEURON_CORE, default: T = None) -> list[Callable] | T:
         """Returns all Neuron internal handlers for this subscription"""
-        ...
 
     def get[T](
         self, automation: Automation | NEURON_CORE, default: T = None
@@ -1076,25 +1051,10 @@ class Subscription:
 
     @property
     def key(self) -> str:
-        if self.event:
-            return self.event
-        elif self.trigger:
-            return stringify(self.trigger)
-        elif self.entities:
-            return stringify([x.entity_id for x in self.entities])
+        if isinstance(self.subject, str):
+            return self.subject
         else:
-            raise RuntimeError()
-
-    @property
-    def subject(self) -> str | dict | list[Entity]:
-        if self.event:
-            return self.event
-        elif self.trigger:
-            return self.trigger
-        elif self.entities:
-            return self.entities
-        else:
-            raise RuntimeError()
+            return stringify(self.subject)
 
     @property
     def automations(self) -> list[Automation]:
@@ -1206,35 +1166,3 @@ class Automation:
         finally:
             neuron.api._logger.reset(logger_restore)
             neuron.api._automation.reset(automation_restore)
-
-    async def subscribe_entities_handler(self, entity_states: dict[str, Any] | None):
-        entity_states = entity_states or {}
-
-        for entity_id, state_object in entity_states.items():
-            if entity_id not in self.entities:
-                self.logger.error(
-                    f"Got unexpected entity state update for {entity_id!r}"
-                )
-                continue
-
-            entity = self.entities[entity_id]
-
-            if "+" in state_object:
-                diff = state_object["+"]
-
-                if "s" in diff:
-                    entity._state = diff["s"]
-
-                if "a" in diff:
-                    entity._attributes.update(diff["a"])
-
-                self.logger.debug("Entity state updated: %r", entity)
-            else:
-                entity._state = state_object["s"]
-                entity._attributes = state_object["a"]
-                entity.initialized.set()
-                self.logger.debug("Set initial entity state: %r", entity)
-
-
-# DEBUG    [neuron.hass] Got message from Home Assistant: {'id': 5, 'type': 'event', 'event': {'a': {'input_boolean.override_lights': {'s': 'on', 'a': {'editable': False, 'friendly_name': 'Override lights'}, 'c': {'id': '01KBABNT2ZXW4HKFV5MDPY8R87', hass.py:144
-#          'parent_id': None, 'user_id': '99a91bc643344446acf412415bc9dea7'}, 'lc': 1764505610.3358967}}}}

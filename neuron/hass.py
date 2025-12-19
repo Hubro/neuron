@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, Iterable, cast
 
 import orjson
 import websockets
@@ -10,9 +10,6 @@ from .config import DEV
 from .event_emitter import EventEmitter
 from .logging import get_logger
 from .util import stringify
-
-if TYPE_CHECKING:
-    from .api import Entity
 
 LOG = get_logger(__name__)
 
@@ -42,6 +39,16 @@ class HASS:
 
         self._ws: websockets.ClientConnection | None = None
         self._new_message_event = self.messages.on_new_message.event()
+
+    def _dump_state(self) -> dict[str, Any]:
+        return {
+            "websocket_uri": self.websocket_uri,
+            "token": self.token,
+            "on_reconnect": repr(self.on_reconnect),
+            "on_new_message": repr(self.on_new_message),
+            "ready": repr(self.ready),
+            "messages": self.messages._dump_state(),
+        }
 
     @property
     def ws(self) -> websockets.ClientConnection:
@@ -287,15 +294,17 @@ class HASS:
         LOG.debug("Subscribed to trigger (id=%d): %s", id, key)
         return id
 
-    async def subscribe_to_entities(self, entities: list[Entity]) -> int:
+    async def subscribe_to_entities(self, entities: Iterable[str]) -> int:
         """Subscribes to one or more entities"""
+
+        entities = list(entities)
+
         assert entities
 
-        entity_ids = [entity.entity_id for entity in entities]
         response = await self.message(
             {
                 "type": "subscribe_entities",
-                "entity_ids": entity_ids,
+                "entity_ids": entities,
             }
         )
         id = response["id"]
@@ -305,7 +314,7 @@ class HASS:
                 f"Failed to subscribe to entity states {entities!r}: {response['error']['message']}",
             )
 
-        LOG.debug("Subscribed to entities (id=%d): %s", id, entity_ids)
+        LOG.debug("Subscribed to entities (id=%d): %s", id, entities)
         return id
 
     async def unsubscribe(self, subscription_id: int):
@@ -330,6 +339,13 @@ class Messages:
 
     def __getitem__(self, id: int) -> list[dict[str, Any]]:
         return self._cache[id]
+
+    def _dump_state(self) -> dict[str, Any]:
+        return {
+            "msg_id": self._msg_id,
+            "on_new_message": repr(self.on_new_message),
+            "cache": {str(id): messages for id, messages in self._cache.items()},
+        }
 
     def get[T](self, id: int, default: T = None) -> list[dict[str, Any]] | T:
         return self._cache.get(id, default)

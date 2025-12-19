@@ -15,6 +15,16 @@ from .logging import get_logger
 LOG = get_logger(__name__)
 
 
+def bust_cached_props(instance: Any, *props: str):
+    """Shortcut for busting the cache of cached_property"""
+
+    for prop in props:
+        try:
+            delattr(instance, prop)
+        except AttributeError:
+            pass
+
+
 def stringify(obj: Any) -> str:
     return orjson.dumps(obj, option=orjson.OPT_SORT_KEYS).decode()
 

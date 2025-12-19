@@ -18,6 +18,7 @@ from typing import (
     Coroutine,
     Iterable,
     Literal,
+    Mapping,
     Self,
     Sequence,
     TypeAlias,
@@ -414,19 +415,16 @@ class Entity:
     name: str
     entity_id: str
     initialized: asyncio.Event
-    _state: str | None
-    _attributes: dict[str, str]
 
     def __init__(self, entity_id: str):
         self.domain, self.name = entity_id.split(".")
         self.entity_id = entity_id
-        self._state = None
         self.initialized = asyncio.Event()
 
         _entities[entity_id] = self
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__} {self.entity_id} state={self._state!r}>"
+        return f"<{type(self).__name__} {self.entity_id} state={self.state!r}>"
 
     def __str__(self) -> str:
         return self.entity_id
@@ -434,7 +432,7 @@ class Entity:
     def __getattr__(self, name: str, /) -> Any:
         """Allows nicer attribute lookup"""
 
-        if attr := self._attributes.get(name, None):
+        if attr := self.attributes.get(name, None):
             return attr
 
         raise AttributeError(name=name)
@@ -452,10 +450,11 @@ class Entity:
 
     @property
     def state(self) -> str:
-        if self._state is None:
-            raise RuntimeError(f"State for {self.entity_id!r} is not yet initialized")
+        return _n().hass_state_proxy.get_state(self.entity_id)
 
-        return self._state
+    @property
+    def attributes(self) -> Mapping[str, Any]:
+        return _n().hass_state_proxy.get_attributes(self.entity_id)
 
     @property
     def is_locked(self) -> bool:
