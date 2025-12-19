@@ -114,10 +114,21 @@ class HASSStateProxy:
         await self._establish_subscriptions()
 
     async def remove(self, client: Hashable):
+        LOG.info("Removing client from state proxy: %r", client)
+
+        before = self.watched_entities
+
         if client in self._clients:
             self._clients.pop(client)
 
         bust_cached_props(self, "watched_entities")
+        after = self.watched_entities
+
+        if removed := (before - after):
+            # NOTE: Entities may still be getting updates if any other entities
+            # in the same subscription are still watched, but that shouldn't be
+            # a problem.
+            LOG.info("Stopped watching entities: %r", list(removed))
 
         await self._prune_subscriptions()
 
@@ -186,6 +197,8 @@ class HASSStateProxy:
 
     async def _prune_subscriptions(self):
         """Unsubscribes from any states that are no longer watched"""
+
+        LOG.debug("Pruning subscriptions")
 
         for sub_id, entity_ids in self._subs.items():
             if not (self.watched_entities & entity_ids):
