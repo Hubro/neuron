@@ -175,7 +175,10 @@ class HASS:
         LOG.debug("Sending message to Home Assistant: %r", msg)
 
         async with self.lock:
-            await self.ws.send(orjson.dumps(msg), text=True)
+            await self.ws.send(
+                orjson.dumps(msg, default=lambda obj: repr(obj)),
+                text=True,
+            )
 
         # Now we wait for the response
         while True:

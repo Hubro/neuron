@@ -48,6 +48,12 @@ class RequestingFullUpdate(NeuronIntegrationMessage):
     type: Literal["requesting-full-update"] = "requesting-full-update"
 
 
+class RequestingInternalStateDump(NeuronIntegrationMessage):
+    """Requests a full dump of Sedrec's managed entity state"""
+
+    type: Literal["requesting-internal-state-dump"] = "requesting-internal-state-dump"
+
+
 class SwitchTurnedOn(NeuronIntegrationMessage):
     """Informs Neuron that a managed switch was turned on"""
 
@@ -88,6 +94,11 @@ class FullUpdate(NeuronCoreMessage):
     managed_switches: list[ManagedSwitch]
     managed_sensors: list[ManagedSensor]
     managed_buttons: list[ManagedButton]
+
+
+class InternalStateDump(NeuronCoreMessage):
+    type: Literal["internal-state-dump"] = "internal-state-dump"
+    internal_state: dict[str, Any]
 
 
 class SetValue(NeuronCoreMessage):
@@ -133,10 +144,12 @@ class ManagedButton(BaseModel):
 
 Message = (
     RequestingFullUpdate
+    | RequestingInternalStateDump
     | SwitchTurnedOn
     | SwitchTurnedOff
     | ButtonPressed
     | FullUpdate
+    | InternalStateDump
     | SetValue
 )
 

@@ -44,7 +44,7 @@ async def main():
     )
 
     def sigusr2_handler():
-        neuron._dump_state()
+        neuron._dump_state_to_disk()
 
     signal.signal(
         signal.SIGUSR2,

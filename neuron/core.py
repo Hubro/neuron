@@ -653,8 +653,12 @@ class Neuron:
                     managed_buttons=managed_buttons,
                 )
 
-                LOG.info("Sending full update to Neuron integration | %r", message)
                 await self.send_to_integration(message)
+
+            case neuron.bus.RequestingInternalStateDump():
+                await self.send_to_integration(
+                    neuron.bus.InternalStateDump(internal_state=self._dump_state())
+                )
 
             case neuron.bus.SwitchTurnedOff() | neuron.bus.SwitchTurnedOn():
                 new_value = isinstance(message, neuron.bus.SwitchTurnedOn)
@@ -763,9 +767,8 @@ class Neuron:
                 await self.hass.unsubscribe(subscription.id)
                 del self.subscriptions[subscription]
 
-    def _dump_state(self):
+    def _dump_state(self) -> dict[str, Any]:
         """Dumps the full internal state of Neuron to disk for debugging"""
-        import orjson
 
         neuron = {}
 
@@ -815,10 +818,15 @@ class Neuron:
 
         neuron["hass"] = self.hass._dump_state()
 
+        return neuron
+
+    def _dump_state_to_disk(self):
+        import orjson
+
         with open("neuron-dump.json", "wb") as f:
             f.write(
                 orjson.dumps(
-                    neuron,
+                    self._dump_state(),
                     option=orjson.OPT_INDENT_2,
                     default=lambda obj: repr(obj),
                 )
