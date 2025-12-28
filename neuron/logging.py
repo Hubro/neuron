@@ -100,7 +100,7 @@ class NeuronLogger(logging.Logger):
             *args,
             exc_info=exc_info,
             stack_info=stack_info,
-            stacklevel=stacklevel,
+            stacklevel=stacklevel + 1,
             extra=extra,
         )
 
