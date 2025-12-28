@@ -3,11 +3,17 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+from contextlib import contextmanager
 from datetime import datetime
+from queue import Queue
 from typing import Mapping, cast
 
 import orjson
+import requests
 import rich.logging
+
+from .config import load_config
 
 logging._nameToLevel["TRACE"] = 5
 logging._levelToName[5] = "TRACE"
@@ -16,17 +22,30 @@ logging._levelToName[5] = "TRACE"
 def setup_dev_logging():
     """Sets up pretty logging to STDOUT"""
 
+    config = load_config()
+
+    setup_pretty_stdout_logging()
+
+    setup_file_logging()
+
+    if config.victoria_logs_uri:
+        logging.root.addHandler(VictoriaLogsHandler(config.victoria_logs_uri))
+
+        for handler in logging.root.handlers:
+            handler.addFilter(VictoriaLogFilter())
+
+
+def setup_pretty_stdout_logging():
     level = logging.DEBUG if os.environ.get("VERBOSE") else logging.INFO
     level = 5 if os.environ.get("TRACE") else level
 
     handler = PrettyHandler(rich_tracebacks=True, markup=True)
     handler.setLevel(level)
 
-    logging.basicConfig(
-        level="TRACE",
-        handlers=[handler],
-    )
+    logging.root.level = 0
+    logging.root.addHandler(handler)
 
+    # Reduce noise while developing
     if os.environ.get("WS_VERBOSE"):
         logging.getLogger("websockets.client").setLevel(logging.DEBUG)
     else:
@@ -34,10 +53,10 @@ def setup_dev_logging():
 
     logging.getLogger("watchdog").setLevel(logging.INFO)
 
-    setup_file_logging()
-
 
 def setup_prod_logging():
+    config = load_config()
+
     logging.basicConfig(
         level="TRACE",
         stream=sys.stdout,
@@ -46,21 +65,31 @@ def setup_prod_logging():
 
     setup_file_logging()
 
+    if config.victoria_logs_uri:
+        logging.root.addHandler(VictoriaLogsHandler(config.victoria_logs_uri))
+
+        for handler in logging.root.handlers:
+            handler.addFilter(VictoriaLogFilter())
+
 
 def setup_file_logging():
     """Sets up JSON logging to a local file"""
 
     from .config import load_config
 
-    suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+    config = load_config()
 
-    file_log_path = load_config().data_dir / f"neuron_{suffix}.log"
+    file_log_path = config.json_log_file
+
+    if not file_log_path:
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        file_log_path = config.data_dir / f"neuron_{suffix}.log"
 
     if not file_log_path.parent.exists():
         try:
             file_log_path.parent.mkdir()
         except Exception:
-            get_logger().exception(
+            logging.root.exception(
                 f"Log dir {file_log_path.parent!r} doesn't exist and could not be created"
             )
             return
@@ -68,11 +97,11 @@ def setup_file_logging():
     try:
         handler = logging.FileHandler(file_log_path)
     except Exception:
-        get_logger().exception("Failed to set up file logging")
+        logging.root.exception("Failed to set up file logging")
         return
 
     handler.setFormatter(JSONFormatter())
-    get_logger().addHandler(handler)
+    logging.root.addHandler(handler)
 
 
 def get_logger(name: str | None = None) -> NeuronLogger:
@@ -106,9 +135,6 @@ class NeuronLogger(logging.Logger):
 
 
 class JSONFormatter(logging.Formatter):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
     def format(self, record: logging.LogRecord) -> str:
         return orjson.dumps(
             record.__dict__ | {"message": record.getMessage()},
@@ -133,6 +159,81 @@ class PrettyHandler(rich.logging.RichHandler):
             message = escape(message)
 
         return rf"{name}{component}{message}"
+
+
+class VictoriaLogsHandler(logging.Handler):
+    """Ships JSON log lines to VictoriaLogs"""
+
+    def __init__(self, uri: str) -> None:
+        self.uri = uri
+
+        self.session: requests.Session | None = None
+        self.level = logging.NOTSET
+
+        self.queue = Queue()
+        self.thread = threading.Thread(
+            target=self.daemon, name="victoria-logs-handler", daemon=True
+        )
+        self.thread.start()
+
+        super().__init__()
+
+    def daemon(self):
+        if self.session is None:
+            self.session = requests.Session()
+
+        while True:
+            try:
+                self.push_log_line(self.queue.get())
+
+            except Exception as e:
+                get_logger(__name__).warning(
+                    "Failed to push log line to VictoriaLogs",
+                    exc_info=e,
+                    extra={"source": "VictoriaLogsHandler"},
+                )
+
+    def push_log_line(self, log_line: dict):
+        json_log_line = orjson.dumps(
+            log_line,
+            default=lambda x: "?",
+        )
+
+        assert self.session is not None
+        response = self.session.post(
+            f"{self.uri}/insert/jsonline",
+            data=json_log_line,
+            headers={
+                "Content-Type": "application/stream+json",
+                "VL-Msg-Field": "message",
+                "VL-Time-Field": "created",
+            },
+            timeout=1,
+        )
+        response.raise_for_status()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Skip logs produced by this handler
+        if getattr(record, "source", "") == "VictoriaLogsHandler":
+            return
+
+        # Skip logs from requests
+        if record.name.startswith("requests"):
+            return
+
+        self.queue.put(record.__dict__ | {"message": record.getMessage()})
+
+
+class VictoriaLogFilter(logging.Filter):
+    """Filters out log lines from the victoria log handler thread to prevent loops"""
+
+    def filter(self, record: logging.LogRecord):
+        if (
+            "victoria-logs-handler" in (record.threadName or "")
+        ) and record.levelno < logging.WARNING:
+            return False
+
+        return True
 
 
 logging.setLoggerClass(NeuronLogger)
