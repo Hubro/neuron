@@ -10,27 +10,20 @@ from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, assert_never, overload
-
-from typing_extensions import Sentinel
+from typing import Any, Callable, Iterator, overload
 
 import neuron.api
 import neuron.bus
 
-from .api import (
-    Entity,
-    ManagedButton,
-    ManagedEntity,
-    ManagedSensor,
-    ManagedSwitch,
-    StateChange,
-)
+from .api import Entity, ManagedEntity, StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .hass_state_proxy import HASSStateProxy
 from .logging import NeuronLogger, get_logger
-from .state import AutomationState, ManagedEntityState, NeuronState
+from .managed_entities import ManagedEntities
+from .state import AutomationState, NeuronState
 from .util import (
+    NEURON_CORE,
     bust_cached_props,
     filter_keyword_args,
     stringify,
@@ -42,20 +35,16 @@ from .watch import watch_automation_modules
 LOG = get_logger(__name__)
 
 
-# Used in place of Automation in some places to represent Neutron core
-NEURON_CORE = Sentinel("NEURON_CORE")
-
-
 class Neuron:
     config: Config
     hass: HASS
     hass_state_proxy: HASSStateProxy
+    managed_entities: ManagedEntities
     automations: dict[str, Automation]
     packages: list[Path]  # Packages we've loaded automations from
     tasks: list[asyncio.Task]
     subscriptions: Subscriptions
     state: NeuronState
-    managed_entities: list[ManagedEntity]
 
     _subscriptions_lock: asyncio.Lock
 
@@ -71,9 +60,9 @@ class Neuron:
         self.config = load_config()
         self.hass = HASS(self.config.hass_websocket_uri, self.config.hass_api_token)
         self.hass_state_proxy = HASSStateProxy(self.hass)
+        self.managed_entities = ManagedEntities(self)
         self.tasks = []
         self.subscriptions = Subscriptions()
-        self.managed_entities = []
         self._subscriptions_lock = asyncio.Lock()
         self._ready = asyncio.Event()
         self._stop = asyncio.Event()
@@ -94,6 +83,7 @@ class Neuron:
         start_task(self.auto_reload_automations_task)
         start_task(self._stop.wait, name="neuron_wait-for-stop-signal")
         start_task(self.hass_state_proxy.run, name="neuron_hass-state-proxy")
+        start_task(self.managed_entities.run, name="neuron_managed-entities")
 
         neuron.api._reset()
         neuron.api._neuron = self  # Any API usage will now target this Neuron instance
@@ -101,9 +91,6 @@ class Neuron:
         # Load automations in a separate task so we can proceed with monitoring
         # the core tasks
         asyncio.create_task(self.load_automations(), name="neuron-load_automations")
-
-        LOG.info("Subscribing to messages from the Neuron integration")
-        await self.subscribe(NEURON_CORE, self.integration_message_handler, to="neuron")
 
         try:
             done, pending = await asyncio.wait(
@@ -292,9 +279,6 @@ class Neuron:
         except asyncio.CancelledError:
             return
 
-    def create_core_managed_entities(self):
-        pass  # TODO: Create stats entities
-
     async def load_packages(self):
         for package_name in self.config.packages:
             LOG.info("Importing package: %s", package_name)
@@ -328,15 +312,7 @@ class Neuron:
         # new automations show up there
         self.state.save()
 
-        self.create_core_managed_entities()
-
         self._ready.set()
-
-        # Send the integration a full update just in case. That way, we can
-        # always be sure the integration is up-to-date after restarting the
-        # Neuron addon.
-        # FIXME: Move full update logic to a separate function
-        await self.send_to_integration(neuron.bus.RequestingFullUpdate())  # pyright: ignore[reportArgumentType]
 
     async def reload_automations(self, module_paths: list[str]):
         """Reloads the given automation module paths"""
@@ -405,22 +381,7 @@ class Neuron:
         else:
             LOG.info(f"Automation {automation.name!r} loaded but is disabled")
 
-        automation_enabled = ManagedSwitch(
-            f"neuron_automation_{automation.name}_enabled",
-            friendly_name=f"Neuron - {automation.name} - Enabled",
-            initial_value=automation.enabled,
-        )
-        setattr(automation_enabled, "__automation", automation)
-
-        @automation_enabled.when_turned_on
-        async def on():
-            await self.enable_automation(automation)
-
-        @automation_enabled.when_turned_off
-        async def off():
-            await self.disable_automation(automation)
-
-        self.managed_entities.append(automation_enabled)
+        self.managed_entities.create_automation_toggle_switch(automation)
 
     async def init_automation(self, automation: Automation):
         """Initializes an automation"""
@@ -568,150 +529,11 @@ class Neuron:
                         NEURON_CORE, handler, to=old_subscription.subject
                     )
 
-    async def integration_message_handler(self, event_type: str, event: dict[str, Any]):
-        """Event handler for messages from the Neuron integration"""
-
-        # Don't answer any messages from the integration until we're fully up
-        # and running
-        await self._ready.wait()
-
-        assert event_type == "neuron"
-
-        try:
-            message = neuron.bus.parse_message(event)
-        except Exception:
-            LOG.exception("Failed to parse Neuron integration message")
-            return
-
-        if isinstance(message, neuron.bus.NeuronCoreMessage):
-            return  # Ignore our own messages
-
-        LOG.trace("Got message from Neuron companion integration: %r", message)
-
-        def managed_entities() -> Iterator[tuple[Automation | None, ManagedEntity]]:
-            for entity in self.managed_entities:
-                yield (None, entity)
-
-            for automation in self.automations.values():
-                for entity in automation.managed_entities.values():
-                    yield (automation, entity)
-
-        match message:
-            case neuron.bus.RequestingFullUpdate():
-                # total_trigger_subscriptions = sum(
-                #     1 for sub in self.subscriptions if sub.trigger
-                # )
-                # total_event_subscriptions = sum(
-                #     1 for sub in self.subscriptions if sub.event
-                # )
-                # total_state_subscriptions = sum(
-                #     1 for sub in self.subscriptions if sub.entities
-                # )
-
-                managed_switches = []
-                managed_sensors = []
-                managed_buttons = []
-
-                for automation, entity in managed_entities():
-                    match entity:
-                        case ManagedSwitch():
-                            managed_switches.append(
-                                neuron.bus.ManagedSwitch(
-                                    unique_id=entity.unique_id,
-                                    friendly_name=entity.friendly_name or entity.name,
-                                    value=entity.value,
-                                    automation=automation.name if automation else None,
-                                )
-                            )
-
-                        case ManagedSensor():
-                            managed_sensors.append(
-                                neuron.bus.ManagedSensor(
-                                    unique_id=entity.unique_id,
-                                    friendly_name=entity.friendly_name or entity.name,
-                                    value=entity.value,
-                                    automation=automation.name if automation else None,
-                                    device_class=entity.device_class,
-                                    state_class=entity.state_class,
-                                    native_unit_of_measurement=entity.native_unit_of_measurement,
-                                    suggested_unit_of_measurement=entity.suggested_unit_of_measurement,
-                                )
-                            )
-
-                        case ManagedButton():
-                            managed_buttons.append(
-                                neuron.bus.ManagedButton(
-                                    unique_id=entity.unique_id,
-                                    friendly_name=entity.friendly_name,
-                                    automation=automation.name if automation else None,
-                                )
-                            )
-
-                message = neuron.bus.FullUpdate(
-                    managed_switches=managed_switches,
-                    managed_sensors=managed_sensors,
-                    managed_buttons=managed_buttons,
-                )
-
-                await self.send_to_integration(message)
-
-            case neuron.bus.RequestingInternalStateDump():
-                await self.send_to_integration(
-                    neuron.bus.InternalStateDump(internal_state=self._dump_state())
-                )
-
-            case neuron.bus.SwitchTurnedOff() | neuron.bus.SwitchTurnedOn():
-                new_value = isinstance(message, neuron.bus.SwitchTurnedOn)
-
-                for automation, managed_entity in managed_entities():
-                    match managed_entity:
-                        case ManagedSwitch(unique_id=message.unique_id):
-                            old_value = managed_entity.value
-
-                            if new_value == old_value:
-                                break
-
-                            await managed_entity.set_value(
-                                new_value,
-                                suppress_handler=(
-                                    automation and not automation.initialized
-                                ),
-                            )
-                            break
-
-            case neuron.bus.ButtonPressed():
-                for automation, managed_entity in managed_entities():
-                    match managed_entity:
-                        case neuron.api.ManagedButton(unique_id=message.unique_id):
-                            if automation and not automation.initialized:
-                                return
-
-                            await managed_entity.press()
-                            break
-
-            case other:
-                assert_never(other)
-
-    async def send_to_integration(self, message: neuron.bus.NeuronCoreMessage):
-        LOG.debug("Sending message to integration: %r", message)
-        await self.hass.fire_event("neuron", data=message.model_dump())
-
-    async def set_managed_entity_value(self, entity_id: str, value: Any):
-        LOG.debug("Setting value of managed entity %r to %r", entity_id, value)
-
-        if x := self.state.managed_entity_states.get(entity_id):
-            if x.value == value:
-                return  # State unchanged
-
-            x.value = value
-        else:
-            self.state.managed_entity_states[entity_id] = ManagedEntityState(value)
-
-        await self.send_to_integration(
-            neuron.bus.SetValue(unique_id=entity_id, value=value)
-        )
-
-        self.state.save()
+                for automation in old_subscription.automations:
+                    for handler in old_subscription[automation]:
+                        await self.subscribe(
+                            automation, handler, to=old_subscription.subject
+                        )
 
     async def subscribe(
         self,
@@ -793,6 +615,8 @@ class Neuron:
             }
             for name, automation in self.automations.items()
         }
+
+        neuron["persistent_state"] = self.state._dump_state()
 
         def subscription_handlers(sub: Subscription):
             handlers = {}

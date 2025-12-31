@@ -148,7 +148,7 @@ class HASS:
                             messages = [messages]
 
                         for message in messages:
-                            LOG.debug("Got message from Home Assistant: %r", message)
+                            LOG.trace("Got message from Home Assistant: %r", message)
                             self.messages.add(message)
 
                 except websockets.ConnectionClosed as e:
@@ -172,7 +172,7 @@ class HASS:
 
         id = self.messages.next_id()
         msg = {**msg, "id": id}
-        LOG.debug("Sending message to Home Assistant: %r", msg)
+        LOG.trace("Sending message to Home Assistant: %r", msg)
 
         async with self.lock:
             await self.ws.send(

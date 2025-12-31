@@ -88,6 +88,9 @@ class NeuronState:
             LOG.trace("Renaming temporary file to %r", str(state_path))
             os.replace(tmp.name, state_path)
 
+    def _dump_state(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass
 class AutomationState:

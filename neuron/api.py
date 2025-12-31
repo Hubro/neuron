@@ -424,7 +424,12 @@ class Entity:
         _entities[entity_id] = self
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__} {self.entity_id} state={self.state!r}>"
+        if self.entity_id in _n().hass_state_proxy.watched_entities:
+            state = self.state
+        else:
+            state = "?"
+
+        return f"<{type(self).__name__} {self.entity_id} state={state!r}>"
 
     def __str__(self) -> str:
         return self.entity_id
@@ -663,7 +668,7 @@ class ManagedEntity(ABC):
 
         # TODO: Attributes
 
-        await _n().set_managed_entity_value(self.unique_id, value)
+        await _n().managed_entities.set_value(self.unique_id, value)
 
         if not suppress_handler:
             await self._on_change(

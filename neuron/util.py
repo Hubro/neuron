@@ -1,3 +1,6 @@
+# pyright: enableExperimentalFeatures=true
+from __future__ import annotations
+
 import asyncio
 import inspect
 import sys
@@ -8,11 +11,17 @@ from types import FrameType
 from typing import Any, Callable
 
 import orjson
+from typing_extensions import Sentinel
 
 from .config import load_config
+from .event_emitter import EventEmitter
 from .logging import get_logger
 
 LOG = get_logger(__name__)
+
+
+# Used in place of Automation in some places to represent Neutron core
+NEURON_CORE = Sentinel("NEURON_CORE")
 
 
 def bust_cached_props(instance: Any, *props: str):
@@ -184,3 +193,28 @@ async def wait_event(*events: asyncio.Event):
         task.cancel()
 
     yield map[done.pop()]
+
+
+class Clock:
+    """Triggers an event every X seconds using EventEmitter"""
+
+    def __init__(self, interval: float) -> None:
+        self.interval = interval
+        self.event_emitter = EventEmitter()
+
+    def start(self):
+        self.task = asyncio.create_task(
+            self.loop(), name=f"clock_task_{self.interval}s"
+        )
+
+    def event(self) -> asyncio.Event:
+        return self.event_emitter.event()
+
+    async def loop(self):
+        try:
+            while True:
+                await asyncio.sleep(self.interval)
+
+                self.event_emitter.emit()
+        except asyncio.CancelledError:
+            pass
