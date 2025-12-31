@@ -915,7 +915,7 @@ class ManagedButton(ManagedEntity):
 
 @dataclass
 class StateChange:
-    from_state: str
+    from_state: str | None
     to_state: str
 
     @classmethod
@@ -925,9 +925,12 @@ class StateChange:
         trigger = msg["event"]["variables"]["trigger"]
         assert trigger["platform"] == "state"
 
+        old = trigger["from_state"]
+        new = trigger["to_state"]
+
         return cls(
-            from_state=trigger["from_state"]["state"],
-            to_state=trigger["to_state"]["state"],
+            from_state=old["state"] if old else None,
+            to_state=new["state"],
         )
 
         # Example state change event:
