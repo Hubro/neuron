@@ -163,6 +163,9 @@ def debounce(seconds: float):
 async def wait_event(*events: asyncio.Event):
     """Yields the first async event to be set
 
+    If multiple events are set simultaneously, the first one listed in the
+    argument list is yielded.
+
     Usage:
 
         async with wait_event(new_message, reconnected) as event:
@@ -176,7 +179,6 @@ async def wait_event(*events: asyncio.Event):
     map = {asyncio.create_task(event.wait()): event for event in events}
 
     done, pending = await asyncio.wait(map.keys(), return_when=asyncio.FIRST_COMPLETED)
-    assert len(done) == 1
 
     for task in pending:
         task.cancel()

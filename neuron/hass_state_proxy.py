@@ -3,6 +3,8 @@ from functools import cached_property, reduce
 from types import MappingProxyType
 from typing import Any, Hashable, Iterable
 
+from neuron.event_emitter import EventEmitter
+
 from .hass import HASS
 from .logging import get_logger
 from .util import bust_cached_props, wait_event
@@ -29,13 +31,25 @@ class HASSStateProxy:
     _attributes: dict[str, dict[str, Any]]  # entity_id -> asstibutes
     _state_readiness: dict[str, asyncio.Event]
     _task: asyncio.Task | None
+    _new_sub: EventEmitter
+    _lock: asyncio.Lock
+
     _stop: asyncio.Event
+    """Signals graceful shutdown"""
 
     @cached_property
     def watched_entities(self) -> set[str]:
         return reduce(
             lambda x, y: x | y,
             self._clients.values(),
+            set(),
+        )
+
+    @property
+    def subscribed_entities(self) -> set[str]:
+        return reduce(
+            lambda x, y: x | y,
+            self._subs.values(),
             set(),
         )
 
@@ -48,6 +62,8 @@ class HASSStateProxy:
         self._attributes = {}
         self._state_readiness = {}
         self._task = None
+        self._new_sub = EventEmitter()
+        self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
 
     async def run(self):
@@ -55,6 +71,7 @@ class HASSStateProxy:
 
         new_message = self.hass.messages.on_new_message.flag()
         reconnected = self.hass.on_reconnect.event()
+        new_sub = self._new_sub.flag()
         stop = self._stop
 
         try:
@@ -62,16 +79,26 @@ class HASSStateProxy:
 
             while True:
                 new_message.clear()
+                new_sub.clear()
 
+                LOG.debug("Processing state subscriptions")
                 for sub_id in self._subs:
                     if messages := self.hass.messages.pop(sub_id, []):
+                        LOG.debug(
+                            "State subscription %r: %r new message(s)",
+                            sub_id,
+                            len(messages),
+                        )
+
                         for msg in messages:
                             self._process_state_update(msg)
+                    else:
+                        LOG.debug("State subscription %r: No new messages", sub_id)
 
                 # Now we wait for new messages...
-                async with wait_event(new_message, reconnected, stop) as event:
-                    if event is new_message:
-                        pass
+                async with wait_event(new_message, new_sub, reconnected, stop) as event:
+                    if event is new_message or event is new_sub:
+                        continue
 
                     if event is reconnected:
                         LOG.info("Reconnected to Home Assistant")
@@ -103,15 +130,28 @@ class HASSStateProxy:
 
     async def add(self, client: Hashable, entities: Iterable[str]):
         entities = set(entities)
+        new_entities = entities - self.watched_entities
+
+        LOG.debug("Adding client %r with entities: %r", client, entities)
 
         self._clients.setdefault(client, set()).update(entities)
 
-        bust_cached_props(self, "watched_entities")
+        if new_entities:
+            LOG.debug("New entities encountered: %r", new_entities)
 
-        for entity_id in self.watched_entities:
-            self._state_readiness.setdefault(entity_id, asyncio.Event())
+            bust_cached_props(self, "watched_entities")
 
-        await self._establish_subscriptions()
+            for entity_id in new_entities:
+                self._state_readiness[entity_id] = asyncio.Event()
+
+                # The entity might already be part of another subscription, in
+                # which case we can immediately mark it as ready
+                if entity_id in self.subscribed_entities:
+                    self._state_readiness[entity_id].set()
+
+            await self._establish_subscriptions()
+        else:
+            LOG.debug("No new entities encountered")
 
     async def remove(self, client: Hashable):
         LOG.info("Removing client from state proxy: %r", client)
@@ -175,39 +215,42 @@ class HASSStateProxy:
     async def _establish_subscriptions(self):
         """Subscribes to changes for any watched entities that don't yet have one"""
 
-        LOG.info("Establishing state subscriptions")
+        async with self._lock:
+            LOG.info("Establishing state subscriptions")
 
-        subscribed_entities = reduce(
-            lambda x, y: x | y,
-            self._subs.values(),
-            set(),
-        )
-        entities_without_subs = self.watched_entities - subscribed_entities
+            entities_without_subs = self.watched_entities - self.subscribed_entities
 
-        if not entities_without_subs:
-            return
+            if not entities_without_subs:
+                LOG.info("All entities already have a subscription")
+                return
 
-        LOG.debug(
-            "State subscriptions missing for entities: %r", list(entities_without_subs)
-        )
+            LOG.info("Subscribing to entities: %r", list(entities_without_subs))
 
-        sub_id = await self.hass.subscribe_to_entities(entities_without_subs)
+            sub_id = await self.hass.subscribe_to_entities(entities_without_subs)
 
-        self._subs[sub_id] = entities_without_subs
+            self._subs[sub_id] = entities_without_subs
+            bust_cached_props(self, "subscribed_entities")
+
+        # The initial state may already have arrived during the above "await",
+        # so we need to force another processing cycle
+        self._new_sub.emit()
 
     async def _prune_subscriptions(self):
         """Unsubscribes from any states that are no longer watched"""
 
         LOG.debug("Pruning subscriptions")
 
-        for sub_id, entity_ids in self._subs.items():
-            if not (self.watched_entities & entity_ids):
-                LOG.debug(
-                    "None of the entities of sub %r are being watched (%r), unsubscribing",
-                    sub_id,
-                    list(entity_ids),
-                )
-                await self.hass.unsubscribe(sub_id)
+        async with self._lock:
+            for sub_id, entity_ids in list(self._subs.items()):
+                if not (self.watched_entities & entity_ids):
+                    LOG.debug(
+                        "None of the entities of sub %r are being watched (%r), unsubscribing",
+                        sub_id,
+                        list(entity_ids),
+                    )
+                    del self._subs[sub_id]
+                    bust_cached_props(self, "subscribed_entities")
+                    await self.hass.unsubscribe(sub_id)
 
     def _process_state_update(self, state_event: dict[str, Any]):
         LOG.trace("Processing state update event: %r", state_event)
