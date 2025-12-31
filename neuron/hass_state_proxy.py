@@ -111,6 +111,7 @@ class HASSStateProxy:
                             entity_id: asyncio.Event()
                             for entity_id in self.watched_entities
                         }
+                        bust_cached_props(self, "subscribed_entities")
 
                         await self._establish_subscriptions()
 
@@ -119,9 +120,6 @@ class HASSStateProxy:
 
                         for sub_id in self._subs:
                             await self.hass.unsubscribe(sub_id)
-
-                        self._subs.clear()
-                        self._clients.clear()
 
                         break
 
@@ -217,6 +215,8 @@ class HASSStateProxy:
 
         async with self._lock:
             LOG.info("Establishing state subscriptions")
+
+            LOG.debug(f"{self.watched_entities=!r} {self.subscribed_entities=!r}")
 
             entities_without_subs = self.watched_entities - self.subscribed_entities
 
