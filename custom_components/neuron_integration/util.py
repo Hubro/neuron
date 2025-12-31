@@ -5,7 +5,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from . import bus
 from .const import DOMAIN
-from .types import NeuronIntegrationData
+from .integration_data import NeuronIntegrationData
 
 
 def send_message(hass: HomeAssistant, message: bus.Message):
@@ -15,7 +15,7 @@ def send_message(hass: HomeAssistant, message: bus.Message):
 def neuron_data(hass: HomeAssistant) -> NeuronIntegrationData:
     return cast(
         NeuronIntegrationData,
-        hass.data.setdefault(DOMAIN, NeuronIntegrationData()),
+        hass.data.setdefault(DOMAIN, NeuronIntegrationData(hass)),
     )
 
 

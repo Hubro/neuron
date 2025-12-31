@@ -81,5 +81,17 @@ class ManagedSensor(SensorEntity):
                     self._attr_native_value = message.value
                     self.schedule_update_ha_state()
 
+            case bus.FullUpdate():
+                for sensor_entity in message.managed_sensors:
+                    if sensor_entity.unique_id == self.unique_id:
+                        if self._attr_native_value is not sensor_entity.value:
+                            self._attr_native_value = sensor_entity.value
+                            LOG.info(
+                                "Managed sensor %r value set to %r from Neuron full update",
+                                self.unique_id,
+                                sensor_entity.value,
+                            )
+                            self.schedule_update_ha_state()
+
     async def async_update(self):
         LOG.info("Updating sensor %r", self)

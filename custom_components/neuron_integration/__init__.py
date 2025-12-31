@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from functools import partial
-from typing import assert_never
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant
@@ -9,10 +8,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 
 from . import bus
-from .button import ManagedButton
 from .const import DOMAIN
-from .sensor import ManagedSensor
-from .switch import ManagedSwitch
 from .util import neuron_data, neuron_device_info, send_message
 
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
@@ -93,7 +89,7 @@ async def _handle_event(hass: HomeAssistant, event: Event):
             pass  # Handled by each entity
 
         case other:
-            assert_never(other)
+            LOG.info("Ignoring Neuron message of type %r", other.type)
 
 
 def setup_neuron_device(hass: HomeAssistant, entry: ConfigEntry):
@@ -105,37 +101,8 @@ def setup_neuron_device(hass: HomeAssistant, entry: ConfigEntry):
 
 def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
     data = neuron_data(hass)
-
-    data.add_switches(
-        ManagedSwitch(
-            hass,
-            automation=x.automation,
-            unique_id=x.unique_id,
-            value=x.value,
-            friendly_name=x.friendly_name,
-        )
-        for x in message.managed_switches
-    )
-
-    data.add_sensors(
-        ManagedSensor(
-            hass,
-            automation=x.automation,
-            unique_id=x.unique_id,
-            value=x.value,
-            friendly_name=x.friendly_name,
-        )
-        for x in message.managed_sensors
-    )
-
-    data.add_buttons(
-        ManagedButton(
-            hass,
-            automation=x.automation,
-            unique_id=x.unique_id,
-            friendly_name=x.friendly_name,
-        )
-        for x in message.managed_buttons
-    )
+    data.add_switches(message.managed_switches)
+    data.add_sensors(message.managed_sensors)
+    data.add_buttons(message.managed_buttons)
 
     data.entities_created = True
