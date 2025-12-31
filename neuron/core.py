@@ -57,6 +57,8 @@ class Neuron:
     state: NeuronState
     managed_entities: list[ManagedEntity]
 
+    _subscriptions_lock: asyncio.Lock
+
     _ready: asyncio.Event
     """Checkpoint for when Neuron is fully started up, including all automations"""
 
@@ -72,6 +74,7 @@ class Neuron:
         self.tasks = []
         self.subscriptions = Subscriptions()
         self.managed_entities = []
+        self._subscriptions_lock = asyncio.Lock()
         self._ready = asyncio.Event()
         self._stop = asyncio.Event()
 
@@ -553,19 +556,16 @@ class Neuron:
         no cleanup.
         """
 
-        LOG.info("Re-establishing subscriptions")
+        async with self._subscriptions_lock:
+            LOG.info("Re-establishing subscriptions")
 
-        old_subscriptions = self.subscriptions
-        self.subscriptions = Subscriptions()
+            old_subscriptions = self.subscriptions
+            self.subscriptions = Subscriptions()
 
-        for old_subscription in old_subscriptions:
-            for handler in old_subscription.get(NEURON_CORE, []):
-                await self.subscribe(NEURON_CORE, handler, to=old_subscription.subject)
-
-            for automation in old_subscription.automations:
-                for handler in old_subscription[automation]:
+            for old_subscription in old_subscriptions:
+                for handler in old_subscription.get(NEURON_CORE, []):
                     await self.subscribe(
-                        automation, handler, to=old_subscription.subject
+                        NEURON_CORE, handler, to=old_subscription.subject
                     )
 
     async def integration_message_handler(self, event_type: str, event: dict[str, Any]):
@@ -720,20 +720,21 @@ class Neuron:
         *,
         to: str | dict[str, Any],
     ):
-        subscription = self.subscriptions.get(to)
+        async with self._subscriptions_lock:
+            subscription = self.subscriptions.get(to)
 
-        if not subscription:
-            if isinstance(to, str):
-                event = to
-                id = await self.hass.subscribe_to_events(event)
-            else:
-                trigger = to
-                id = await self.hass.subscribe_to_trigger(trigger)
+            if not subscription:
+                if isinstance(to, str):
+                    event = to
+                    id = await self.hass.subscribe_to_events(event)
+                else:
+                    trigger = to
+                    id = await self.hass.subscribe_to_trigger(trigger)
 
-            subscription = Subscription(id, to)
+                subscription = Subscription(id, to)
 
-        subscription.add_handler(automation, handler)
-        self.subscriptions.add(subscription)
+            subscription.add_handler(automation, handler)
+            self.subscriptions.add(subscription)
 
     async def unsubscribe(self, handler: Callable, event_or_trigger: str | dict):
         """Unsubscribes a handler from an event or trigger"""
@@ -758,14 +759,15 @@ class Neuron:
     async def prune_subscriptions(self):
         """Unsubscribes from all events for which there are no remaining handlers"""
 
-        for subscription in list(self.subscriptions):
-            if not subscription.handlers:
-                LOG.debug(
-                    "Subscription %r no longer has any handlers, unsubscribing",
-                    subscription.id,
-                )
-                await self.hass.unsubscribe(subscription.id)
-                del self.subscriptions[subscription]
+        async with self._subscriptions_lock:
+            for subscription in list(self.subscriptions):
+                if not subscription.handlers:
+                    LOG.debug(
+                        "Subscription %r no longer has any handlers, unsubscribing",
+                        subscription.id,
+                    )
+                    await self.hass.unsubscribe(subscription.id)
+                    del self.subscriptions[subscription]
 
     def _dump_state(self) -> dict[str, Any]:
         """Dumps the full internal state of Neuron to disk for debugging"""
