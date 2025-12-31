@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from . import bus
-from .util import automation_device_info, neuron_data, neuron_device_info
+from .util import automation_device_info, neuron_context, neuron_device_info
 
 LOG = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def async_setup_entry(
 
     LOG.info("Setting up Neuron sensor platform")
 
-    data = neuron_data(hass)
+    data = neuron_context(hass)
     data.add_sensor_entities = async_add_entities
     data.platforms_initialized.add("sensor")
 

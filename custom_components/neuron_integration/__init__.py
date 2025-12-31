@@ -9,7 +9,7 @@ from homeassistant.helpers import device_registry as dr
 
 from . import bus
 from .const import DOMAIN
-from .util import neuron_data, neuron_device_info, send_message
+from .util import neuron_context, neuron_device_info, send_message
 
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
 
@@ -22,7 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     setup_neuron_device(hass, entry)
 
-    data = neuron_data(hass)
+    data = neuron_context(hass)
 
     if platforms := set(PLATFORMS) - data.platforms_initialized:
         await hass.config_entries.async_forward_entry_setups(entry, platforms)
@@ -55,7 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     LOG.info("Unloading Neuron integration entry: %r", entry.as_dict())
 
-    data = neuron_data(hass)
+    data = neuron_context(hass)
 
     if data.cleanup_event_listener:
         LOG.info("Cleaning up event listener")
@@ -100,7 +100,7 @@ def setup_neuron_device(hass: HomeAssistant, entry: ConfigEntry):
 
 
 def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
-    data = neuron_data(hass)
+    data = neuron_context(hass)
     data.add_switches(message.managed_switches)
     data.add_sensors(message.managed_sensors)
     data.add_buttons(message.managed_buttons)

@@ -13,7 +13,7 @@ from . import bus
 
 
 @dataclass
-class NeuronIntegrationData:
+class NeuronIntegrationContext:
     hass: HomeAssistant
     cleanup_event_listener: Callable[..., Any] | None = None
     platforms_initialized: set[str] = field(default_factory=set)
@@ -31,7 +31,9 @@ class NeuronIntegrationData:
 
         from .switch import ManagedSwitch
 
-        switch_entities = [
+        existing_switches = set(x.unique_id for x in self.switches)
+
+        new_switch_entities = [
             ManagedSwitch(
                 self.hass,
                 automation=x.automation,
@@ -40,17 +42,23 @@ class NeuronIntegrationData:
                 friendly_name=x.friendly_name,
             )
             for x in switches
+            if x.unique_id not in existing_switches
         ]
 
-        self.add_switch_entities(switch_entities)
-        self.switches.extend(switch_entities)
+        if not new_switch_entities:
+            return
+
+        self.add_switch_entities(new_switch_entities)
+        self.switches.extend(new_switch_entities)
 
     def add_sensors(self, sensors: Iterable[bus.ManagedSensor]):
         assert self.add_sensor_entities
 
         from .sensor import ManagedSensor
 
-        sensor_entities = [
+        existing_sensors = set(x.unique_id for x in self.sensors)
+
+        new_sensor_entities = [
             ManagedSensor(
                 self.hass,
                 automation=x.automation,
@@ -59,17 +67,23 @@ class NeuronIntegrationData:
                 friendly_name=x.friendly_name,
             )
             for x in sensors
+            if x.unique_id not in existing_sensors
         ]
 
-        self.add_sensor_entities(sensor_entities)
-        self.sensors.extend(sensor_entities)
+        if not new_sensor_entities:
+            return
+
+        self.add_sensor_entities(new_sensor_entities)
+        self.sensors.extend(new_sensor_entities)
 
     def add_buttons(self, buttons: Iterable[bus.ManagedButton]):
         assert self.add_button_entities
 
         from .button import ManagedButton
 
-        button_entities = [
+        existing_buttons = set(x.unique_id for x in self.buttons)
+
+        new_button_entities = [
             ManagedButton(
                 self.hass,
                 automation=x.automation,
@@ -77,7 +91,11 @@ class NeuronIntegrationData:
                 friendly_name=x.friendly_name,
             )
             for x in buttons
+            if x.unique_id not in existing_buttons
         ]
 
-        self.add_button_entities(button_entities)
-        self.buttons.extend(button_entities)
+        if not new_button_entities:
+            return
+
+        self.add_button_entities(new_button_entities)
+        self.buttons.extend(new_button_entities)

@@ -5,17 +5,17 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from . import bus
 from .const import DOMAIN
-from .integration_data import NeuronIntegrationData
+from .context import NeuronIntegrationContext
 
 
 def send_message(hass: HomeAssistant, message: bus.Message):
     hass.bus.async_fire("neuron", message.model_dump())
 
 
-def neuron_data(hass: HomeAssistant) -> NeuronIntegrationData:
+def neuron_context(hass: HomeAssistant) -> NeuronIntegrationContext:
     return cast(
-        NeuronIntegrationData,
-        hass.data.setdefault(DOMAIN, NeuronIntegrationData(hass)),
+        NeuronIntegrationContext,
+        hass.data.setdefault(DOMAIN, NeuronIntegrationContext(hass)),
     )
 
 

@@ -1,5 +1,4 @@
 import logging
-from functools import cached_property
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -8,7 +7,12 @@ from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import bus
-from .util import automation_device_info, neuron_data, neuron_device_info, send_message
+from .util import (
+    automation_device_info,
+    neuron_context,
+    neuron_device_info,
+    send_message,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -22,7 +26,7 @@ async def async_setup_entry(
 
     LOG.info("Setting up Neuron switch platform")
 
-    data = neuron_data(hass)
+    data = neuron_context(hass)
     data.add_switch_entities = async_add_entities
     data.platforms_initialized.add("switch")
 
