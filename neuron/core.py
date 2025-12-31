@@ -517,23 +517,20 @@ class Neuron:
         no cleanup.
         """
 
-        async with self._subscriptions_lock:
-            LOG.info("Re-establishing subscriptions")
+        LOG.info("Re-establishing subscriptions")
 
-            old_subscriptions = self.subscriptions
-            self.subscriptions = Subscriptions()
+        old_subscriptions = self.subscriptions
+        self.subscriptions = Subscriptions()
 
-            for old_subscription in old_subscriptions:
-                for handler in old_subscription.get(NEURON_CORE, []):
+        for old_subscription in old_subscriptions:
+            for handler in old_subscription.get(NEURON_CORE, []):
+                await self.subscribe(NEURON_CORE, handler, to=old_subscription.subject)
+
+            for automation in old_subscription.automations:
+                for handler in old_subscription[automation]:
                     await self.subscribe(
-                        NEURON_CORE, handler, to=old_subscription.subject
+                        automation, handler, to=old_subscription.subject
                     )
-
-                for automation in old_subscription.automations:
-                    for handler in old_subscription[automation]:
-                        await self.subscribe(
-                            automation, handler, to=old_subscription.subject
-                        )
 
     async def subscribe(
         self,
