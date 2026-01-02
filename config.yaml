@@ -17,6 +17,9 @@ options:
 schema:
   packages:
     - str
+  victoria_logs_uri: url?
+  victoria_logs_username: str?
+  victoria_logs_password: password?
 homeassistant_api: true
 map:
   - addon_config:rw

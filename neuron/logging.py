@@ -4,14 +4,15 @@ import logging
 import os
 import sys
 import threading
-from contextlib import contextmanager
 from datetime import datetime
 from queue import Queue
+from time import sleep
 from typing import Mapping, cast
 
 import orjson
 import requests
 import rich.logging
+from requests.auth import HTTPBasicAuth
 
 from .config import load_config
 
@@ -29,7 +30,13 @@ def setup_dev_logging():
     setup_file_logging()
 
     if config.victoria_logs_uri:
-        logging.root.addHandler(VictoriaLogsHandler(config.victoria_logs_uri))
+        logging.root.addHandler(
+            VictoriaLogsHandler(
+                config.victoria_logs_uri,
+                config.victoria_logs_username,
+                config.victoria_logs_password,
+            )
+        )
 
         for handler in logging.root.handlers:
             handler.addFilter(VictoriaLogFilter())
@@ -66,7 +73,13 @@ def setup_prod_logging():
     setup_file_logging()
 
     if config.victoria_logs_uri:
-        logging.root.addHandler(VictoriaLogsHandler(config.victoria_logs_uri))
+        logging.root.addHandler(
+            VictoriaLogsHandler(
+                config.victoria_logs_uri,
+                config.victoria_logs_username,
+                config.victoria_logs_password,
+            )
+        )
 
         for handler in logging.root.handlers:
             handler.addFilter(VictoriaLogFilter())
@@ -164,8 +177,9 @@ class PrettyHandler(rich.logging.RichHandler):
 class VictoriaLogsHandler(logging.Handler):
     """Ships JSON log lines to VictoriaLogs"""
 
-    def __init__(self, uri: str) -> None:
+    def __init__(self, uri: str, usr: str | None, pwd: str | None) -> None:
         self.uri = uri
+        self.auth = HTTPBasicAuth(usr, pwd) if (usr and pwd) else None
 
         self.session: requests.Session | None = None
         self.level = logging.NOTSET
@@ -190,10 +204,17 @@ class VictoriaLogsHandler(logging.Handler):
                 get_logger(__name__).warning(
                     "Failed to push log line to VictoriaLogs",
                     exc_info=e,
-                    extra={"source": "VictoriaLogsHandler"},
                 )
 
+                # Take a break - If VictoriaLogs is down temporarily it won't
+                # be back up in nanoseconds
+                sleep(60)
+
     def push_log_line(self, log_line: dict):
+        # Some fields have no useful information and adds lots of noise
+        for ignored_field in ["msg", "args", "thread", "process"]:
+            log_line.pop(ignored_field, None)
+
         json_log_line = orjson.dumps(
             log_line,
             default=lambda x: "?",
@@ -207,20 +228,15 @@ class VictoriaLogsHandler(logging.Handler):
                 "Content-Type": "application/stream+json",
                 "VL-Msg-Field": "message",
                 "VL-Time-Field": "created",
+                "VL-Extra-Fields": "app=neuron",
+                "VL-Stream-Fields": "app",
             },
             timeout=1,
+            auth=self.auth,
         )
         response.raise_for_status()
 
     def emit(self, record: logging.LogRecord) -> None:
-        # Skip logs produced by this handler
-        if getattr(record, "source", "") == "VictoriaLogsHandler":
-            return
-
-        # Skip logs from requests
-        if record.name.startswith("requests"):
-            return
-
         self.queue.put(record.__dict__ | {"message": record.getMessage()})
 
 
