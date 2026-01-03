@@ -354,12 +354,12 @@ async def action(
     return await _n().hass.perform_action(domain, name, target=target, data=data)
 
 
-async def turn_on(entity: EntityTarget, **kwargs):
-    await action("homeassistant", "turn_on", entity, data=kwargs)
+async def turn_on(entity: EntityTarget, platform="homeassistant", **kwargs):
+    await action(platform, "turn_on", entity, data=kwargs)
 
 
-async def turn_off(entity: EntityTarget, **kwargs):
-    await action("homeassistant", "turn_off", entity, data=kwargs)
+async def turn_off(entity: EntityTarget, platform="homeassistant", **kwargs):
+    await action(platform, "turn_off", entity, data=kwargs)
 
 
 @overload
@@ -561,19 +561,19 @@ class Entity:
 
         return await action(domain, action_name, entity=self, data=data)
 
-    async def turn_on(self, **data):
+    async def turn_on(self, platform="homeassistant", **data):
         """Shortcut for performing the turn_on action for this entity
 
         Keyword arguments are forwarded as data to the turn_on action.
         """
-        await turn_on(self, **data)
+        await turn_on(self, platform=platform, **data)
 
-    async def turn_off(self, **data):
+    async def turn_off(self, platform="homeassistant", **data):
         """Shortcut for performing the turn_off action for this entity
 
         Keyword arguments are forwarded as data to the turn_off action.
         """
-        await turn_off(self, **data)
+        await turn_off(self, platform=platform, **data)
 
     async def lock(self, **data):
         """Shortcut for locking a lock entity"""
