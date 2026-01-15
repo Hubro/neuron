@@ -61,9 +61,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         LOG.info("Cleaning up event listener")
         data.cleanup_event_listener()
 
-    await hass.config_entries.async_unload_platforms(
-        entry, ["switch", "sensor", "button"]
-    )
+    for platform in PLATFORMS:
+        try:
+            await hass.config_entries.async_forward_entry_unload(entry, platform)
+        except ValueError:
+            pass  # Whatever
+
+    del hass.data[DOMAIN]
 
     return True
 
