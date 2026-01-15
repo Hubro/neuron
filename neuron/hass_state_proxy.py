@@ -81,19 +81,20 @@ class HASSStateProxy:
                 new_message.clear()
                 new_sub.clear()
 
-                LOG.debug("Processing state subscriptions")
+                LOG.trace("Processing state subscriptions")
                 for sub_id in self._subs:
                     if messages := self.hass.messages.pop(sub_id, []):
-                        LOG.debug(
+                        LOG.trace(
                             "State subscription %r: %r new message(s)",
                             sub_id,
                             len(messages),
+                            extra={"data": messages},
                         )
 
                         for msg in messages:
                             self._process_state_update(msg)
                     else:
-                        LOG.debug("State subscription %r: No new messages", sub_id)
+                        LOG.trace("State subscription %r: No new messages", sub_id)
 
                 # Now we wait for new messages...
                 async with wait_event(new_message, new_sub, reconnected, stop) as event:
@@ -130,12 +131,12 @@ class HASSStateProxy:
         entities = set(entities)
         new_entities = entities - self.watched_entities
 
-        LOG.debug("Adding client %r with entities: %r", client, entities)
+        LOG.info("Adding client %r with entities: %r", client, entities)
 
         self._clients.setdefault(client, set()).update(entities)
 
         if new_entities:
-            LOG.debug("New entities encountered: %r", new_entities)
+            LOG.info("New entities encountered: %r", new_entities)
 
             bust_cached_props(self, "watched_entities")
 
@@ -149,7 +150,7 @@ class HASSStateProxy:
 
             await self._establish_subscriptions()
         else:
-            LOG.debug("No new entities encountered")
+            LOG.info("No new entities encountered")
 
     async def remove(self, client: Hashable):
         LOG.info("Removing client from state proxy: %r", client)
@@ -214,9 +215,15 @@ class HASSStateProxy:
         """Subscribes to changes for any watched entities that don't yet have one"""
 
         async with self._lock:
-            LOG.info("Establishing state subscriptions")
-
-            LOG.debug(f"{self.watched_entities=!r} {self.subscribed_entities=!r}")
+            LOG.info(
+                "Establishing state subscriptions",
+                extra={
+                    "data": {
+                        "watched_entities": self.watched_entities,
+                        "subscribed_entities": self.subscribed_entities,
+                    }
+                },
+            )
 
             entities_without_subs = self.watched_entities - self.subscribed_entities
 
@@ -238,12 +245,12 @@ class HASSStateProxy:
     async def _prune_subscriptions(self):
         """Unsubscribes from any states that are no longer watched"""
 
-        LOG.debug("Pruning subscriptions")
+        LOG.info("Pruning subscriptions")
 
         async with self._lock:
             for sub_id, entity_ids in list(self._subs.items()):
                 if not (self.watched_entities & entity_ids):
-                    LOG.debug(
+                    LOG.info(
                         "None of the entities of sub %r are being watched (%r), unsubscribing",
                         sub_id,
                         list(entity_ids),
@@ -253,7 +260,7 @@ class HASSStateProxy:
                     await self.hass.unsubscribe(sub_id)
 
     def _process_state_update(self, state_event: dict[str, Any]):
-        LOG.trace("Processing state update event: %r", state_event)
+        LOG.debug("Processing state update event", extra={"data": state_event})
 
         if initial_states := state_event["event"].get("a"):
             for entity_id, state_object in initial_states.items():
@@ -264,7 +271,7 @@ class HASSStateProxy:
                 self._states[entity_id] = state_object["s"]
                 self._attributes[entity_id] = state_object["a"]
 
-                LOG.debug(
+                LOG.info(
                     "Got initial state for entity %r | state=%r attributes=%r",
                     entity_id,
                     state_object["s"],
@@ -312,11 +319,3 @@ class HASSStateProxy:
             "attributes": self._attributes,
             "state_readiness": self._state_readiness,
         }
-
-        # _clients: dict[Hashable, set[str]]
-        # _subs: dict[int, set[str]]  # subscription ID -> associated entity IDs
-        # _states: dict[str, str]  # entity_id -> state
-        # _attributes: dict[str, dict[str, Any]]  # entity_id -> asstibutes
-        # _state_readiness: dict[str, asyncio.Event]
-        # _task: asyncio.Task | None
-        # _stop: asyncio.Event
