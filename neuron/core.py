@@ -116,7 +116,7 @@ class Neuron:
             LOG.info("Shutting down gracefully")
         finally:
             try:
-                await asyncio.wait_for(self._shutdown(), timeout=2)
+                await asyncio.wait_for(self._shutdown(), timeout=10)
                 LOG.info("Bye!")
             except asyncio.TimeoutError:
                 LOG.error("Failed to shut down gracefully, timeout reached")
