@@ -237,10 +237,18 @@ class VictoriaLogsHandler(logging.Handler):
         for ignored_field in ["msg", "args", "thread", "process"]:
             log_line.pop(ignored_field, None)
 
-        json_log_line = orjson.dumps(
-            log_line,
-            default=lambda x: "?",
-        )
+        to_json = lambda arg: orjson.dumps(arg, default=lambda x: repr(x))
+
+        # Pre-encode structured data as JSON, otherwise it gets expanded into
+        # nested fields, causing a big mess
+        for key in list(log_line.keys()):
+            match log_line[key]:
+                case dict() | list():
+                    log_line[key] = to_json(log_line[key]).decode()
+                case set():
+                    log_line[key] = to_json(list(log_line[key])).decode()
+
+        json_log_line = to_json(log_line)
 
         assert self.session is not None
         response = self.session.post(
