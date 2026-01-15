@@ -5,7 +5,7 @@ import importlib
 import signal
 import sys
 
-from neuron.logging import get_logger, setup_dev_logging
+from neuron.logging import dev_logging, get_logger
 from neuron.util import debounce
 
 LOG = get_logger("neuron.dev")
@@ -27,8 +27,6 @@ def terminate_handler():
 
 
 async def main():
-    setup_dev_logging()
-
     asyncio.create_task(auto_reload_task(), name="neuron_core_auto_reload")
 
     loop = asyncio.get_running_loop()
@@ -172,4 +170,5 @@ def reload_neuron():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    with dev_logging():
+        asyncio.run(main())

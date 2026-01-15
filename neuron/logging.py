@@ -4,8 +4,9 @@ import logging
 import os
 import sys
 import threading
+from contextlib import contextmanager
 from datetime import datetime
-from queue import Queue
+from queue import Queue, ShutDown
 from time import sleep
 from typing import Mapping, cast
 
@@ -20,7 +21,8 @@ logging._nameToLevel["TRACE"] = 5
 logging._levelToName[5] = "TRACE"
 
 
-def setup_dev_logging():
+@contextmanager
+def dev_logging():
     """Sets up pretty logging to STDOUT"""
 
     config = load_config()
@@ -29,17 +31,25 @@ def setup_dev_logging():
 
     setup_file_logging()
 
+    vlogshandler = None
+
     if config.victoria_logs_uri:
-        logging.root.addHandler(
-            VictoriaLogsHandler(
-                config.victoria_logs_uri,
-                config.victoria_logs_username,
-                config.victoria_logs_password,
-            )
+        vlogshandler = VictoriaLogsHandler(
+            config.victoria_logs_uri,
+            config.victoria_logs_username,
+            config.victoria_logs_password,
         )
+        logging.root.addHandler(vlogshandler)
 
         for handler in logging.root.handlers:
             handler.addFilter(VictoriaLogFilter())
+
+    try:
+        yield
+    finally:
+        if vlogshandler:
+            vlogshandler.stop()
+            vlogshandler.join()
 
 
 def setup_pretty_stdout_logging():
@@ -61,28 +71,38 @@ def setup_pretty_stdout_logging():
     logging.getLogger("watchdog").setLevel(logging.INFO)
 
 
-def setup_prod_logging():
+@contextmanager
+def prod_logging():
     config = load_config()
+    logging.root.level = logging.NOTSET
 
-    logging.basicConfig(
-        level="TRACE",
-        stream=sys.stdout,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    stdout_handler = logging.StreamHandler(stream=sys.stdout)
+    stdout_handler.level = logging.INFO
+    stdout_handler.formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s"
     )
+    logging.root.addHandler(stdout_handler)
 
     setup_file_logging()
 
+    vlogshandler = None
+
     if config.victoria_logs_uri:
-        logging.root.addHandler(
-            VictoriaLogsHandler(
-                config.victoria_logs_uri,
-                config.victoria_logs_username,
-                config.victoria_logs_password,
-            )
+        vlogshandler = VictoriaLogsHandler(
+            config.victoria_logs_uri,
+            config.victoria_logs_username,
+            config.victoria_logs_password,
         )
+        logging.root.addHandler(vlogshandler)
 
         for handler in logging.root.handlers:
             handler.addFilter(VictoriaLogFilter())
+    try:
+        yield
+    finally:
+        if vlogshandler:
+            vlogshandler.stop()
+            vlogshandler.join()
 
 
 def setup_file_logging():
@@ -113,7 +133,8 @@ def setup_file_logging():
         logging.root.exception("Failed to set up file logging")
         return
 
-    handler.setFormatter(JSONFormatter())
+    handler.formatter = JSONFormatter()
+    handler.level = logging.NOTSET
     logging.root.addHandler(handler)
 
 
@@ -185,20 +206,21 @@ class VictoriaLogsHandler(logging.Handler):
         self.level = logging.NOTSET
 
         self.queue = Queue()
-        self.thread = threading.Thread(
-            target=self.daemon, name="victoria-logs-handler", daemon=True
-        )
+        self.thread = threading.Thread(target=self.loop, name="victoria-logs-handler")
         self.thread.start()
 
         super().__init__()
 
-    def daemon(self):
+    def loop(self):
         if self.session is None:
             self.session = requests.Session()
 
         while True:
             try:
                 self.push_log_line(self.queue.get())
+
+            except ShutDown:
+                return
 
             except Exception as e:
                 get_logger(__name__).warning(
@@ -237,7 +259,16 @@ class VictoriaLogsHandler(logging.Handler):
         response.raise_for_status()
 
     def emit(self, record: logging.LogRecord) -> None:
+        if self.queue.is_shutdown:
+            return
+
         self.queue.put(record.__dict__ | {"message": record.getMessage()})
+
+    def stop(self):
+        self.queue.shutdown()
+
+    def join(self):
+        self.thread.join()
 
 
 class VictoriaLogFilter(logging.Filter):
