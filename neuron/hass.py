@@ -148,7 +148,11 @@ class HASS:
                             messages = [messages]
 
                         for message in messages:
-                            LOG.trace("Got message from Home Assistant: %r", message)
+                            LOG.trace(
+                                "Got message from Home Assistant: %r",
+                                message,
+                                extra={"data": message},
+                            )
                             self.messages.add(message)
 
                 except websockets.ConnectionClosed as e:
@@ -172,7 +176,7 @@ class HASS:
 
         id = self.messages.next_id()
         msg = {**msg, "id": id}
-        LOG.trace("Sending message to Home Assistant: %r", msg)
+        LOG.trace("Sending message to Home Assistant: %r", msg, extra={"data": msg})
 
         async with self.lock:
             await self.ws.send(
@@ -253,10 +257,10 @@ class HASS:
 
         if not response["success"]:
             LOG.error(
-                "Failed to fire event of type %r (data=%r): %r",
+                "Failed to fire event of type %r: %r",
                 event_type,
-                data,
                 response["error"]["message"],
+                extra={"data": data},
             )
 
     async def subscribe_to_events(self, event: str = "*") -> int:
@@ -280,6 +284,7 @@ class HASS:
         """Subscribes to a trigger and returns the Subscription"""
 
         key = stringify(trigger)
+        type = trigger.get("trigger", "???")
 
         response = await self.message(
             {
@@ -294,7 +299,7 @@ class HASS:
                 f"Failed to subscribe to trigger {key!r}: {response['error']['message']}",
             )
 
-        LOG.debug("Subscribed to trigger (id=%d): %s", id, key)
+        LOG.debug("Subscribed to %r trigger (id=%d)", type, id, extra={"data": trigger})
         return id
 
     async def subscribe_to_entities(self, entities: Iterable[str]) -> int:

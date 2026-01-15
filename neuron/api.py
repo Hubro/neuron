@@ -233,7 +233,9 @@ def on_event(event: str = "*", **filter: Any):
                 if event_value != expected_value:
                     return
 
-            _l().info("Executing event handler: %s", handler.__name__)
+            _l().info(
+                "Executing event handler: %s", handler.__name__, extra={"data": event}
+            )
             await handler(*args, **kwargs)
 
         # Flag this as an event handler wrapper, causing core to pass "handler_kwargs"
@@ -346,10 +348,15 @@ async def action(
             domain,
             name,
             entity_id,
-            extra={"component": "api"},
+            extra={"component": "api", "data": data},
         )
     else:
-        _l().info("Performing action %s.%s", domain, name, extra={"component": "api"})
+        _l().info(
+            "Performing action %s.%s",
+            domain,
+            name,
+            extra={"component": "api", "data": data},
+        )
 
     return await _n().hass.perform_action(domain, name, target=target, data=data)
 
