@@ -399,6 +399,15 @@ class Neuron:
             LOG.warning("Automation is already initialized: %r", automation)
             return
 
+        LOG.debug("Initializing entities")
+        try:
+            await self.hass_state_proxy.add(automation, automation.entities.keys())
+        except Exception:
+            LOG.exception(
+                "Exception raised while initializing entities for %r", automation
+            )
+            return
+
         LOG.debug("Establishing subscriptions")
         try:
             await asyncio.wait_for(
@@ -409,15 +418,6 @@ class Neuron:
             LOG.exception(
                 "Exception raised while establishing subscriptions for %r", automation
             )
-            await self.remove_automation_subscriptions(automation)
-            return
-
-        LOG.debug("Awaiting initial entity states before proceeding")
-        entity_ids = set(automation.entities.keys())
-        try:
-            await self.hass_state_proxy.wait_for_states(entity_ids)
-        except ValueError:
-            automation.logger.exception("Failed getting initial entity states")
             await self.remove_automation_subscriptions(automation)
             return
 
@@ -504,8 +504,6 @@ class Neuron:
 
         for event, handler in automation.event_handlers:
             await self.subscribe(automation, handler, to=event)
-
-        await self.hass_state_proxy.add(automation, automation.entities.keys())
 
     async def remove_automation_subscriptions(self, automation: Automation):
         if automation in self.subscriptions:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Iterable, cast
+from typing import Any, Iterable, TypedDict, cast
 
 import orjson
 import websockets
@@ -195,7 +195,7 @@ class HASS:
 
         return response
 
-    async def get_all_states(self) -> Any:
+    async def get_all_states(self) -> list[State]:
         response = await self.message({"type": "get_states"})
 
         if not response["success"]:
@@ -302,29 +302,6 @@ class HASS:
         LOG.debug("Subscribed to %r trigger (id=%d)", type, id, extra={"data": trigger})
         return id
 
-    async def subscribe_to_entities(self, entities: Iterable[str]) -> int:
-        """Subscribes to one or more entities"""
-
-        entities = list(entities)
-
-        assert entities
-
-        response = await self.message(
-            {
-                "type": "subscribe_entities",
-                "entity_ids": entities,
-            }
-        )
-        id = response["id"]
-
-        if not response["success"]:
-            raise RuntimeError(
-                f"Failed to subscribe to entity states {entities!r}: {response['error']['message']}",
-            )
-
-        LOG.debug("Subscribed to entities (id=%d): %s", id, entities)
-        return id
-
     async def unsubscribe(self, subscription_id: int):
         response = await self.message(
             {"type": "unsubscribe_events", "subscription": subscription_id}
@@ -388,3 +365,9 @@ class Messages:
         """Resets the instance to its initial state, ready for a new HASS connection"""
         self._msg_id = 0
         self._cache.clear()
+
+
+class State(TypedDict):
+    entity_id: str
+    state: str
+    attributes: dict[str, Any]
