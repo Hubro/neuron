@@ -108,6 +108,7 @@ class HASSStateProxy:
                         self._attributes = {}
                         bust_cached_props(self, "subscribed_entities")
 
+                        await self._fetch_initial_states()
                         await self._establish_subscriptions()
 
                     if event is stop:
@@ -134,18 +135,7 @@ class HASSStateProxy:
 
             bust_cached_props(self, "watched_entities")
 
-            hass_states = await self._hass_states()
-
-            for entity in new_entities:
-                self._states[entity] = hass_states[entity]["state"]
-                self._attributes[entity] = hass_states[entity]["attributes"]
-                LOG.info(
-                    "Set initial state for %r: %r | attributes=%r",
-                    entity,
-                    self._states[entity],
-                    self._attributes[entity],
-                )
-
+            await self._fetch_initial_states()
             await self._establish_subscriptions()
         else:
             LOG.info("No new entities encountered")
@@ -185,19 +175,20 @@ class HASSStateProxy:
 
         return MappingProxyType(self._attributes[entity_id])
 
-    async def _hass_states(self) -> dict[str, State]:
+    async def all_states(self, force_refresh=False) -> dict[str, State]:
         """Returns all states from HASS
 
         This function is cached and can safely be called repeatedly.
         """
 
-        now = perf_counter()
-        ts = self._hass_states_dump_ts
-        hass_cache_timeout = 10  # seconds
+        if not force_refresh:
+            now = perf_counter()
+            ts = self._hass_states_dump_ts
+            hass_cache_timeout = 10  # seconds
 
-        if ts and (now - ts) < hass_cache_timeout:
-            assert self._hass_states_dump is not None
-            return self._hass_states_dump
+            if ts and (now - ts) < hass_cache_timeout:
+                assert self._hass_states_dump is not None
+                return self._hass_states_dump
 
         LOG.info("Fetching all states from Home Assistant")
         dump = await self.hass.get_all_states()
@@ -205,6 +196,20 @@ class HASSStateProxy:
         self._hass_states_dump_ts = perf_counter()
 
         return self._hass_states_dump
+
+    async def _fetch_initial_states(self):
+        hass_states = await self.all_states()
+
+        for entity in self.watched_entities:
+            if entity not in self._states:
+                self._states[entity] = hass_states[entity]["state"]
+                self._attributes[entity] = hass_states[entity]["attributes"]
+                LOG.info(
+                    "Set initial state for %r: %r | attributes=%r",
+                    entity,
+                    self._states[entity],
+                    self._attributes[entity],
+                )
 
     async def _establish_subscriptions(self):
         """Subscribes to changes for any watched entities that don't yet have one"""
