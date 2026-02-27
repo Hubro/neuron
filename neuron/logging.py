@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from queue import Queue, ShutDown
@@ -19,6 +20,18 @@ from .config import load_config
 
 logging._nameToLevel["TRACE"] = 5
 logging._levelToName[5] = "TRACE"
+
+
+def record_factory(*args, **kwargs):
+    ts = time.time_ns()
+    record = logging.LogRecord(*args, **kwargs)
+    record.__dict__["created_ns"] = ts
+
+    return record
+
+
+# Override the log record factory to add nanosecond timestamps
+logging.setLogRecordFactory(record_factory)
 
 
 @contextmanager
@@ -257,7 +270,7 @@ class VictoriaLogsHandler(logging.Handler):
             headers={
                 "Content-Type": "application/stream+json",
                 "VL-Msg-Field": "message",
-                "VL-Time-Field": "created",
+                "VL-Time-Field": "created_ns",
                 "VL-Extra-Fields": "app=neuron",
                 "VL-Stream-Fields": "app",
             },
