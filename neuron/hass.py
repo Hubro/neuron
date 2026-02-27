@@ -284,7 +284,7 @@ class HASS:
         """Subscribes to a trigger and returns the Subscription"""
 
         key = stringify(trigger)
-        type = trigger.get("trigger", "???")
+        type = trigger.get("platform") or trigger.get("trigger") or "???"
 
         response = await self.message(
             {

@@ -69,7 +69,13 @@ def _async_debounce(seconds: float):
                 await asyncio.sleep(seconds)
 
                 task = None
-                await fn(*args, **kwargs)
+
+                try:
+                    await fn(*args, **kwargs)
+                except Exception:
+                    LOG.exception(
+                        "Unhandled exception in debounced function %r", fn.__qualname__
+                    )
 
             if task:
                 LOG.debug(
