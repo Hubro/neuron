@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterator, Self, cast
 
+from neuron import debounce
 from neuron.state import ManagedEntityState
 from neuron.util import NEURON_CORE, Clock, wait_event
 
@@ -45,12 +46,7 @@ class ManagedEntities:
         # the stats entities won't have the right states
         await self.neuron._ready.wait()
 
-        self.create_core_managed_entities()
-
-        # Send the integration a full update just in case. That way, we can
-        # always be sure the integration is up-to-date after restarting the
-        # Neuron addon.
-        await self.emit_full_update()
+        await self.create_core_managed_entities()
 
         clock = Clock(1.0)
         clock.start()
@@ -74,7 +70,7 @@ class ManagedEntities:
         except asyncio.CancelledError:
             pass
 
-    def create_core_managed_entities(self):
+    async def create_core_managed_entities(self):
         """Creates the Neuron core managed entities and sets their initial states"""
 
         stats = NeuronCoreStats.resolve(self.neuron)
@@ -88,7 +84,9 @@ class ManagedEntities:
             "Created core managed entities: %r", list(self._managed_entities.values())
         )
 
-    def create_automation_toggle_switch(self, automation: Automation):
+        await self.emit_full_update_debounced()
+
+    async def create_automation_toggle_switch(self, automation: Automation):
         automation_enabled = api.ManagedSwitch(
             f"neuron_automation_{automation.name}_enabled",
             friendly_name=f"Neuron - {automation.name} - Enabled",
@@ -106,6 +104,8 @@ class ManagedEntities:
             await self.neuron.disable_automation(automation)
 
         self._managed_entities[automation_enabled.name] = automation_enabled
+
+        await self.emit_full_update_debounced()
 
     async def refresh_core_entities(self):
         """Refreshes the state of Neuron core's managed entities"""
@@ -199,8 +199,6 @@ class ManagedEntities:
     async def emit_full_update(self):
         """Emits a full state update of Neuron's managed entities"""
 
-        LOG.info("Emitting full managed entity state update to Neuron integration")
-
         managed_switches = []
         managed_sensors = []
         managed_buttons = []
@@ -246,7 +244,16 @@ class ManagedEntities:
             managed_buttons=managed_buttons,
         )
 
+        LOG.info(
+            "Emitting full managed entity state update to Neuron integration",
+            extra={"data": message.model_dump()},
+        )
+
         await self.send(message)
+
+    @debounce(3)
+    async def emit_full_update_debounced(self):
+        await self.emit_full_update()
 
     async def send(self, message: bus.NeuronCoreMessage):
         LOG.debug("Sending message to integration: %r", message)

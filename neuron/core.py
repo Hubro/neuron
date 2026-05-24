@@ -387,7 +387,7 @@ class Neuron:
         else:
             LOG.info(f"Automation {automation.name!r} loaded but is disabled")
 
-        self.managed_entities.create_automation_toggle_switch(automation)
+        await self.managed_entities.create_automation_toggle_switch(automation)
 
     async def init_automation(self, automation: Automation):
         """Initializes an automation"""

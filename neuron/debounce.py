@@ -1,7 +1,7 @@
 import asyncio
 from asyncio import iscoroutinefunction
 from functools import wraps
-from typing import Callable, Coroutine
+from typing import Callable, Coroutine, cast
 
 from neuron.logging import get_logger
 
@@ -32,7 +32,7 @@ def debounce(seconds: float):
 def _sync_debounce(seconds: float):
     handle: asyncio.Handle | None = None
 
-    def decorator(fn: Callable):
+    def decorator[T: Callable](fn: T) -> T:
         @wraps(fn)
         def wrapped(*args, **kwargs):
             nonlocal handle
@@ -50,7 +50,7 @@ def _sync_debounce(seconds: float):
 
             handle = asyncio.get_running_loop().call_later(seconds, call)
 
-        return wrapped
+        return cast(T, wrapped)
 
     return decorator
 
@@ -58,7 +58,7 @@ def _sync_debounce(seconds: float):
 def _async_debounce(seconds: float):
     task: asyncio.Task | None = None
 
-    def decorator(fn: Callable[..., Coroutine]):
+    def decorator[T: Callable](fn: T) -> T:
         @wraps(fn)
         async def wrapped(*args, **kwargs):
             nonlocal task
@@ -89,6 +89,6 @@ def _async_debounce(seconds: float):
 
             task = asyncio.create_task(call(), name=f"async_debounce-{fn.__name__}")
 
-        return wrapped
+        return cast(T, wrapped)
 
     return decorator
