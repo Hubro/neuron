@@ -719,6 +719,9 @@ class ManagedSwitch(ManagedEntity):
     ):
         assert "." not in name, "Name can not contain period symbol"
 
+        self._turned_on_handler = None
+        self._turned_off_handler = None
+
         super().__init__(
             unique_id=f"switch.{name}",
             initial_value=True if initial_value in [True, "on"] else False,
