@@ -46,6 +46,7 @@ __all__ = [
     "action",
     "turn_on",
     "turn_off",
+    "mqtt_publish",
     "get_logger",
     "debounce",
     "throttle",
@@ -369,6 +370,28 @@ async def turn_on(entity: EntityTarget, platform="homeassistant", **kwargs):
 
 async def turn_off(entity: EntityTarget, platform="homeassistant", **kwargs):
     await action(platform, "turn_off", entity, data=kwargs)
+
+
+async def mqtt_publish(
+    topic: str,
+    payload: str | None = None,
+    qos: Literal[0, 1, 2] | None = None,
+    retain: bool = False,
+):
+    """A convenience shortcut for running the mqtt.publish action"""
+
+    data = {
+        "topic": topic,
+        "payload": payload,
+    }
+
+    if qos is not None:
+        data["qos"] = str(qos)
+
+    if retain:
+        data["retain"] = True
+
+    await action("mqtt", "publish", data=data)
 
 
 @overload
