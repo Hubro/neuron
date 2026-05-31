@@ -30,6 +30,7 @@ from typing import (
 from neuron.debounce import debounce
 from neuron.hass_const import SensorDeviceClass, SensorStateClass
 from neuron.logging import NeuronLogger, get_logger
+from neuron.throttle import throttle
 from neuron.util import filter_keyword_args
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ __all__ = [
     "turn_off",
     "get_logger",
     "debounce",
+    "throttle",
     "Entity",
     "ManagedSwitch",
     "ManagedSensor",
