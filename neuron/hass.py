@@ -61,7 +61,7 @@ class HASS:
         LOG.info("Connecting to Home Assistant")
 
         LOG.debug("Opening Websocket connection: %s", self.websocket_uri)
-        self._ws = await websockets.connect(uri=self.websocket_uri)
+        self._ws = await websockets.connect(uri=self.websocket_uri, max_size=10_000_000)
 
         LOG.debug("Waiting for auth request...")
         request = orjson.loads(await self._ws.recv())
