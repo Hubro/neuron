@@ -741,11 +741,12 @@ class ManagedSwitch(ManagedEntity):
 
     _turned_on_handler: AsyncFunction | None
     _turned_off_handler: AsyncFunction | None
+    _value: bool | None
 
     def __init__(
         self,
         name: str,
-        initial_value: Literal["on", "off", True, False],
+        initial_value: Literal["on", "off", True, False] | None,
         friendly_name: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
@@ -755,11 +756,13 @@ class ManagedSwitch(ManagedEntity):
 
         super().__init__(
             unique_id=f"switch.{name}",
-            initial_value=True if initial_value in [True, "on"] else False,
+            initial_value=None
+            if initial_value is None
+            else initial_value in [True, "on"],
             friendly_name=friendly_name,
         )
 
-    async def _on_change(self, change: ValueChange[bool]):
+    async def _on_change(self, change: ValueChange[bool | None]):
         assert change.from_value != change.to_value
 
         if change.to_value is True and self._turned_on_handler is not None:
@@ -775,7 +778,7 @@ class ManagedSwitch(ManagedEntity):
             await self._turned_off_handler(**kwargs)
 
     @property
-    def value(self) -> bool:
+    def value(self) -> bool | None:
         return self._value
 
     @property
@@ -837,27 +840,33 @@ class ManagedSwitch(ManagedEntity):
             await self.turn_on()
             return True
 
-    async def set_value(self, value: Literal[True, "on", False, "off"] | str, **kwargs):
+    async def set_value(
+        self,
+        value: Literal[True, "on", False, "off"] | str | None,
+        **kwargs,
+    ):
         """Set the value of the managed switch
 
         The type also allows "str" to allow setting the value of another
-        switch directly. Just make sure the value is "on" or "off" first!
+        switch directly. Values must be "on", "off", or None.
         """
 
-        assert value in [True, "on", False, "off"]
+        assert value in [True, "on", False, "off", None]
 
-        await self._set_value(True if value in [True, "on"] else False, **kwargs)
+        await self._set_value(
+            None if value is None else value in [True, "on"], **kwargs
+        )
 
 
 class ManagedBinarySensor(ManagedEntity):
     """A binary sensor entity created and managed by Neuron"""
 
-    _value: bool
+    _value: bool | None
 
     def __init__(
         self,
         name: str,
-        initial_value: Literal["on", "off", True, False],
+        initial_value: Literal["on", "off", True, False] | None,
         friendly_name: str | None = None,
         device_class: BinarySensorDeviceClass | None = None,
     ):
@@ -867,12 +876,14 @@ class ManagedBinarySensor(ManagedEntity):
 
         super().__init__(
             unique_id=f"binary_sensor.{name}",
-            initial_value=True if initial_value in [True, "on"] else False,
+            initial_value=None
+            if initial_value is None
+            else initial_value in [True, "on"],
             friendly_name=friendly_name,
         )
 
     @property
-    def value(self) -> bool:
+    def value(self) -> bool | None:
         return self._value
 
     @property
@@ -883,16 +894,22 @@ class ManagedBinarySensor(ManagedEntity):
     def is_off(self) -> bool:
         return self._value is False
 
-    async def set_value(self, value: Literal[True, "on", False, "off"] | str, **kwargs):
-        assert value in [True, "on", False, "off"]
+    async def set_value(
+        self,
+        value: Literal[True, "on", False, "off"] | str | None,
+        **kwargs,
+    ):
+        assert value in [True, "on", False, "off", None]
 
-        await self._set_value(True if value in [True, "on"] else False, **kwargs)
+        await self._set_value(
+            None if value is None else value in [True, "on"], **kwargs
+        )
 
-    async def _on_change(self, change: ValueChange[bool]):
+    async def _on_change(self, change: ValueChange[bool | None]):
         assert change.from_value != change.to_value
 
 
-SensorValue: TypeAlias = str | int | float | date | datetime | Decimal
+SensorValue: TypeAlias = str | int | float | date | datetime | Decimal | None
 
 
 class ManagedSensor[T = SensorValue](ManagedEntity):
@@ -909,12 +926,12 @@ class ManagedSensor[T = SensorValue](ManagedEntity):
             await my_sensor.set_state("999.99")
     """
 
-    _value: T
+    _value: T | None
 
     def __init__(
         self,
         name: str,
-        initial_value: T,
+        initial_value: T | None,
         friendly_name: str | None = None,
         device_class: SensorDeviceClass | None = None,
         state_class: SensorStateClass | None = None,
@@ -935,13 +952,13 @@ class ManagedSensor[T = SensorValue](ManagedEntity):
         )
 
     @property
-    def value(self) -> T:
+    def value(self) -> T | None:
         return self._value
 
-    async def set_value(self, value: T, **kwargs):
+    async def set_value(self, value: T | None, **kwargs):
         await self._set_value(value, **kwargs)
 
-    async def _on_change(self, change: ValueChange[T]):
+    async def _on_change(self, change: ValueChange[T | None]):
         assert change.from_value != change.to_value
 
 

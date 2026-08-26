@@ -34,7 +34,7 @@ class ManagedBinarySensor(BinarySensorEntity):
         hass: HomeAssistant,
         automation: str | None,
         unique_id: str,
-        value: bool,
+        value: bool | None,
         friendly_name: str | None,
         device_class: BinarySensorDeviceClass | None,
     ) -> None:
@@ -71,7 +71,7 @@ class ManagedBinarySensor(BinarySensorEntity):
 
         match message:
             case bus.SetValue(unique_id=self.unique_id):
-                assert isinstance(message.value, bool)
+                assert message.value is None or isinstance(message.value, bool)
 
                 if self._attr_is_on is not message.value:
                     LOG.info(

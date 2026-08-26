@@ -27,7 +27,7 @@ except ImportError:
         SensorStateClass,
     )
 
-SensorValue: TypeAlias = str | int | float | date | datetime | Decimal
+SensorValue: TypeAlias = str | int | float | date | datetime | Decimal | None
 
 
 class BaseMessage(BaseModel):
@@ -92,7 +92,7 @@ class ManagedBinarySensor(BaseModel):
     unique_id: str
     friendly_name: str | None
     automation: str | None  # None means that the entity is managed by Neuron core
-    value: bool
+    value: bool | None
     device_class: BinarySensorDeviceClass | None
     # attributes: dict[str, str]
 
@@ -130,7 +130,7 @@ class ManagedSwitch(BaseModel):
     unique_id: str
     friendly_name: str | None
     automation: str | None  # None means that the entity is managed by Neuron core
-    value: bool
+    value: bool | None
     # attributes: dict[str, str]
 
 

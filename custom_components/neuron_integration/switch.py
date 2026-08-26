@@ -39,7 +39,7 @@ class ManagedSwitch(SwitchEntity):
         hass: HomeAssistant,
         automation: str | None,
         unique_id: str,
-        value: bool,
+        value: bool | None,
         friendly_name: str | None,
     ) -> None:
         self.hass = hass
@@ -76,7 +76,7 @@ class ManagedSwitch(SwitchEntity):
 
         match message:
             case bus.SetValue(unique_id=self.unique_id):
-                assert isinstance(message.value, bool)
+                assert message.value is None or isinstance(message.value, bool)
 
                 if self.is_on is not message.value:
                     self.is_on = message.value
@@ -113,7 +113,7 @@ class ManagedSwitch(SwitchEntity):
         send_message(self.hass, bus.SwitchTurnedOn(unique_id=self.unique_id))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        if not self.is_on:
+        if self.is_on is False:
             return
 
         LOG.info("Turning off managed switch: %r", self.unique_id)
