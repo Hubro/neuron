@@ -42,7 +42,7 @@ def dev_logging():
 
     setup_pretty_stdout_logging()
 
-    setup_file_logging()
+    # setup_file_logging()
 
     vlogshandler = None
 
@@ -96,7 +96,7 @@ def prod_logging():
     )
     logging.root.addHandler(stdout_handler)
 
-    setup_file_logging()
+    # setup_file_logging()
 
     vlogshandler = None
 
