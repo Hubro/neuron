@@ -619,7 +619,7 @@ class Entity:
 
     async def unlock(self, **data):
         """Shortcut for unlocking a lock entity"""
-        await self.action("lock", data=data)
+        await self.action("unlock", data=data)
 
     async def open_cover(self, **data):
         """Shortcut for opening a cover entity"""
