@@ -20,6 +20,40 @@ class EntityCategory(StrEnum):
     DIAGNOSTIC = "diagnostic"
 
 
+# From: homeassistant.components.binary_sensor
+class BinarySensorDeviceClass(StrEnum):
+    """Device class for binary sensors."""
+
+    BATTERY = "battery"
+    BATTERY_CHARGING = "battery_charging"
+    CO = "carbon_monoxide"
+    COLD = "cold"
+    CONNECTIVITY = "connectivity"
+    DOOR = "door"
+    GARAGE_DOOR = "garage_door"
+    GAS = "gas"
+    HEAT = "heat"
+    LIGHT = "light"
+    LOCK = "lock"
+    MOISTURE = "moisture"
+    MOTION = "motion"
+    MOVING = "moving"
+    OCCUPANCY = "occupancy"
+    OPENING = "opening"
+    PLUG = "plug"
+    POWER = "power"
+    PRESENCE = "presence"
+    PROBLEM = "problem"
+    RUNNING = "running"
+    SAFETY = "safety"
+    SMOKE = "smoke"
+    SOUND = "sound"
+    TAMPER = "tamper"
+    UPDATE = "update"
+    VIBRATION = "vibration"
+    WINDOW = "window"
+
+
 # From: homeassistant.components.sensor.const
 class SensorDeviceClass(StrEnum):
     """Device class for sensors."""

@@ -28,7 +28,11 @@ from typing import (
 )
 
 from neuron.debounce import debounce
-from neuron.hass_const import SensorDeviceClass, SensorStateClass
+from neuron.hass_const import (
+    BinarySensorDeviceClass,
+    SensorDeviceClass,
+    SensorStateClass,
+)
 from neuron.logging import NeuronLogger, get_logger
 from neuron.throttle import throttle
 from neuron.util import filter_keyword_args
@@ -52,6 +56,7 @@ __all__ = [
     "throttle",
     "Entity",
     "ManagedSwitch",
+    "ManagedBinarySensor",
     "ManagedSensor",
     "ManagedButton",
     "SensorValue",
@@ -60,6 +65,7 @@ __all__ = [
     "NeuronLogger",
     "SubscriptionHandle",
     # Re-export of Home Assistant constants:
+    "BinarySensorDeviceClass",
     "SensorDeviceClass",
     "SensorStateClass",
 ]
@@ -841,6 +847,49 @@ class ManagedSwitch(ManagedEntity):
         assert value in [True, "on", False, "off"]
 
         await self._set_value(True if value in [True, "on"] else False, **kwargs)
+
+
+class ManagedBinarySensor(ManagedEntity):
+    """A binary sensor entity created and managed by Neuron"""
+
+    _value: bool
+
+    def __init__(
+        self,
+        name: str,
+        initial_value: Literal["on", "off", True, False],
+        friendly_name: str | None = None,
+        device_class: BinarySensorDeviceClass | None = None,
+    ):
+        assert "." not in name, "Name can not contain period symbol"
+
+        self.device_class = device_class
+
+        super().__init__(
+            unique_id=f"binary_sensor.{name}",
+            initial_value=True if initial_value in [True, "on"] else False,
+            friendly_name=friendly_name,
+        )
+
+    @property
+    def value(self) -> bool:
+        return self._value
+
+    @property
+    def is_on(self) -> bool:
+        return self._value is True
+
+    @property
+    def is_off(self) -> bool:
+        return self._value is False
+
+    async def set_value(self, value: Literal[True, "on", False, "off"] | str, **kwargs):
+        assert value in [True, "on", False, "off"]
+
+        await self._set_value(True if value in [True, "on"] else False, **kwargs)
+
+    async def _on_change(self, change: ValueChange[bool]):
+        assert change.from_value != change.to_value
 
 
 SensorValue: TypeAlias = str | int | float | date | datetime | Decimal

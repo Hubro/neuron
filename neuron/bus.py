@@ -14,9 +14,14 @@ from pydantic import BaseModel, Field, RootModel
 
 try:
     # Neuron addon:
-    from neuron.api import SensorDeviceClass, SensorStateClass
+    from neuron.api import (
+        BinarySensorDeviceClass,
+        SensorDeviceClass,
+        SensorStateClass,
+    )
 except ImportError:
     # Neuron integration:
+    from homeassistant.components.binary_sensor import BinarySensorDeviceClass
     from homeassistant.components.sensor.const import (
         SensorDeviceClass,
         SensorStateClass,
@@ -83,6 +88,15 @@ class ButtonPressed(NeuronIntegrationMessage):
 #
 
 
+class ManagedBinarySensor(BaseModel):
+    unique_id: str
+    friendly_name: str | None
+    automation: str | None  # None means that the entity is managed by Neuron core
+    value: bool
+    device_class: BinarySensorDeviceClass | None
+    # attributes: dict[str, str]
+
+
 class FullUpdate(NeuronCoreMessage):
     """A full update of managed entities
 
@@ -92,6 +106,7 @@ class FullUpdate(NeuronCoreMessage):
 
     type: Literal["full-update"] = "full-update"
     managed_switches: list[ManagedSwitch]
+    managed_binary_sensors: list[ManagedBinarySensor]
     managed_sensors: list[ManagedSensor]
     managed_buttons: list[ManagedButton]
 

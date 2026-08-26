@@ -200,6 +200,7 @@ class ManagedEntities:
         """Emits a full state update of Neuron's managed entities"""
 
         managed_switches = []
+        managed_binary_sensors = []
         managed_sensors = []
         managed_buttons = []
 
@@ -212,6 +213,17 @@ class ManagedEntities:
                             friendly_name=entity.friendly_name or entity.name,
                             value=entity.value,
                             automation=automation.name if automation else None,
+                        )
+                    )
+
+                case api.ManagedBinarySensor():
+                    managed_binary_sensors.append(
+                        bus.ManagedBinarySensor(
+                            unique_id=entity.unique_id,
+                            friendly_name=entity.friendly_name or entity.name,
+                            value=entity.value,
+                            automation=automation.name if automation else None,
+                            device_class=entity.device_class,
                         )
                     )
 
@@ -240,6 +252,7 @@ class ManagedEntities:
 
         message = bus.FullUpdate(
             managed_switches=managed_switches,
+            managed_binary_sensors=managed_binary_sensors,
             managed_sensors=managed_sensors,
             managed_buttons=managed_buttons,
         )

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.button import ButtonEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.switch import SwitchEntity
@@ -9,8 +10,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import bus
 
-# from homeassistant.components.binary_sensor import BinarySensorEntity
-
 
 @dataclass
 class NeuronIntegrationContext:
@@ -18,12 +17,13 @@ class NeuronIntegrationContext:
     cleanup_event_listener: Callable[..., Any] | None = None
     platforms_initialized: set[str] = field(default_factory=set)
     add_switch_entities: AddEntitiesCallback | None = None
+    add_binary_sensor_entities: AddEntitiesCallback | None = None
     add_sensor_entities: AddEntitiesCallback | None = None
     add_button_entities: AddEntitiesCallback | None = None
     switches: list[SwitchEntity] = field(default_factory=list)
+    binary_sensors: list[BinarySensorEntity] = field(default_factory=list)
     sensors: list[SensorEntity] = field(default_factory=list)
     buttons: list[ButtonEntity] = field(default_factory=list)
-    # binary_sensors: list[BinarySensorEntity] = field(default_factory=list)
     entities_created: bool = False
 
     def add_switches(self, switches: Iterable[bus.ManagedSwitch]):
@@ -50,6 +50,32 @@ class NeuronIntegrationContext:
 
         self.add_switch_entities(new_switch_entities)
         self.switches.extend(new_switch_entities)
+
+    def add_binary_sensors(self, binary_sensors: Iterable[bus.ManagedBinarySensor]):
+        assert self.add_binary_sensor_entities
+
+        from .binary_sensor import ManagedBinarySensor
+
+        existing_binary_sensors = set(x.unique_id for x in self.binary_sensors)
+
+        new_binary_sensor_entities = [
+            ManagedBinarySensor(
+                self.hass,
+                automation=x.automation,
+                unique_id=x.unique_id,
+                value=x.value,
+                friendly_name=x.friendly_name,
+                device_class=x.device_class,
+            )
+            for x in binary_sensors
+            if x.unique_id not in existing_binary_sensors
+        ]
+
+        if not new_binary_sensor_entities:
+            return
+
+        self.add_binary_sensor_entities(new_binary_sensor_entities)
+        self.binary_sensors.extend(new_binary_sensor_entities)
 
     def add_sensors(self, sensors: Iterable[bus.ManagedSensor]):
         assert self.add_sensor_entities
