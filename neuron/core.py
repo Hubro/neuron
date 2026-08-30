@@ -93,7 +93,7 @@ class Neuron:
         asyncio.create_task(self.load_automations(), name="neuron-load_automations")
 
         try:
-            done, pending = await asyncio.wait(
+            done, _ = await asyncio.wait(
                 self.tasks, return_when=asyncio.FIRST_COMPLETED
             )
 
@@ -237,7 +237,7 @@ class Neuron:
 
             handler_kwargs["log"] = logger
 
-            handler_name = handler.__qualname__
+            handler_name = getattr(handler, "__qualname__", "???")
             handler_is_event_wrapper = getattr(handler, "_event_handler_wrapper", False)
 
             try:
@@ -916,7 +916,7 @@ class Subscription:
         if handler in handlers:
             LOG.error(
                 "Refusing to add handler %r (from %s) to subscription %r more than once",
-                handler.__name__,
+                getattr(handler, "__name__", "???"),
                 source,
                 self.id,
             )
