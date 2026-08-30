@@ -303,14 +303,14 @@ class Neuron:
                 # full kwargs dict so it can be used for filtering
                 if handler_is_event_wrapper:
                     kwargs["handler_kwargs"] = handler_kwargs
-                    LOG.trace(
+                    logger.trace(
                         "Executing event handler wrapper for: %s",
                         handler_name,
                         extra={"data": handler_kwargs},
                     )
 
                 else:
-                    LOG.debug(
+                    logger.debug(
                         "Executing handler: %s",
                         handler_name,
                         extra={"data": handler_kwargs},
