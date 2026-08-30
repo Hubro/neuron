@@ -4,13 +4,23 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sys
+import time
 from contextlib import contextmanager
-from contextvars import copy_context
+from contextvars import Context, copy_context
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
+from itertools import chain
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, overload
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    Iterator,
+    Self,
+    cast,
+    overload,
+)
 
 import neuron.api
 import neuron.bus
@@ -35,6 +45,42 @@ from .watch import watch_automation_modules
 LOG = get_logger(__name__)
 
 
+EPHEMERAL_TASK_TIMEOUT = 300
+"""Seconds before event handlers and such are assumed to be frozen indefinitely"""
+
+
+class NeuronTask(asyncio.Task):
+    start_time: float
+    """Monotonic clock readout when the task was created"""
+
+    automation: Automation | NEURON_CORE
+    """The automation that owns this task, if any"""
+
+    @property
+    def elapsed(self) -> float:
+        """Seconds passed since the task was created"""
+        return time.monotonic() - self.start_time
+
+    @classmethod
+    def factory(cls, loop, coro, **kwargs) -> Self:
+        return cls(coro, loop=loop, **kwargs)
+
+    @classmethod
+    def create[T](
+        cls,
+        automation: Automation | NEURON_CORE,
+        coro: Coroutine[Any, Any, T],
+        *,
+        name: str | None = None,
+        context: Context | None = None,
+    ) -> Self:
+        task = cast(Self, asyncio.create_task(coro, name=name, context=context))
+        task.start_time = time.monotonic()
+        task.automation = automation
+
+        return task
+
+
 class Neuron:
     config: Config
     hass: HASS
@@ -43,6 +89,7 @@ class Neuron:
     automations: dict[str, Automation]
     packages: list[Path]  # Packages we've loaded automations from
     tasks: list[asyncio.Task]
+    ephemeral_tasks: list[NeuronTask]
     subscriptions: Subscriptions
     state: NeuronState
 
@@ -62,6 +109,7 @@ class Neuron:
         self.hass_state_proxy = HASSStateProxy(self.hass)
         self.managed_entities = ManagedEntities(self)
         self.tasks = []
+        self.ephemeral_tasks = []
         self.subscriptions = Subscriptions()
         self._subscriptions_lock = asyncio.Lock()
         self._ready = asyncio.Event()
@@ -69,6 +117,8 @@ class Neuron:
 
     async def start(self):
         LOG.info("Starting Neuron!")
+
+        asyncio.get_running_loop().set_task_factory(NeuronTask.factory)
 
         self.state = NeuronState.load()
 
@@ -84,13 +134,20 @@ class Neuron:
         start_task(self._stop.wait, name="neuron_wait-for-stop-signal")
         start_task(self.hass_state_proxy.run, name="neuron_hass-state-proxy")
         start_task(self.managed_entities.run, name="neuron_managed-entities")
+        start_task(self.reap_ephemeral_tasks_task, name="neuron_ephemeral-task-reaper")
 
         neuron.api._reset()
         neuron.api._neuron = self  # Any API usage will now target this Neuron instance
 
         # Load automations in a separate task so we can proceed with monitoring
         # the core tasks
-        asyncio.create_task(self.load_automations(), name="neuron-load_automations")
+        self.ephemeral_tasks.append(
+            NeuronTask.create(
+                NEURON_CORE,
+                self.load_automations(),
+                name="neuron-load_automations",
+            )
+        )
 
         try:
             done, _ = await asyncio.wait(
@@ -134,19 +191,18 @@ class Neuron:
         await self.prune_subscriptions()
 
         LOG.info("Shutting down background tasks")
-        for task in self.tasks:
-            task.cancel()
-
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for task in self.tasks + self.ephemeral_tasks:
+            if task.cancel():
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         LOG.info("Closing Home Assistant Websocket connection")
         await self.hass.disconnect()
 
     async def event_subscription_handler_task(self):
-        """Async task for keeping track of subscriptions and calling handlers"""
+        """Async task for keeping track of subscriptions and execute handlers"""
 
         new_message = self.hass.messages.on_new_message.flag()
         reconnected = self.hass.on_reconnect.event()
@@ -266,15 +322,96 @@ class Neuron:
                     with automation.api_context():
                         context = copy_context()
 
-                asyncio.create_task(
+                task = NeuronTask.create(
+                    automation,
                     handler(**kwargs),
                     name=f"neutron_event-{id}-handler",
                     context=context,
                 )
+
+                if automation is NEURON_CORE:
+                    self.ephemeral_tasks.append((task))
+                else:
+                    automation.tasks.append(task)
             except Exception:
                 logger.exception(
                     "Failed to execute subscription handler %r", handler_name
                 )
+
+    async def reap_ephemeral_tasks_task(self):
+        """Reaps ephemeral tasks, i.e. event/trigger handlers"""
+
+        def resolve_logging(task: NeuronTask) -> tuple[NeuronLogger, str]:
+            logger = LOG if task.automation is NEURON_CORE else task.automation.logger
+            coro = task.get_coro()
+            assert coro
+            name = coro.__qualname__
+
+            return (logger, name)
+
+        def pop(task: NeuronTask):
+            if task.automation is NEURON_CORE:
+                if task in self.ephemeral_tasks:
+                    self.ephemeral_tasks.remove(task)
+            else:
+                if task in task.automation.tasks:
+                    task.automation.tasks.remove(task)
+
+        while True:
+            automation_tasks = chain(
+                *(automation.tasks for automation in self.automations.values())
+            )
+            tasks = self.ephemeral_tasks + list(automation_tasks)
+
+            if not tasks:
+                await asyncio.sleep(3)
+                continue
+
+            done, pending = await asyncio.wait(
+                tasks, timeout=10, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                if task.cancelled():
+                    pass  # Nothing to do
+                elif e := task.exception():
+                    logger, name = resolve_logging(task)
+                    logger.error("Unhandled exception in '%s'", name, exc_info=e)
+
+                pop(task)
+
+            for task in pending:
+                if task.elapsed >= EPHEMERAL_TASK_TIMEOUT:
+                    logger, name = resolve_logging(task)
+
+                    if task.automation is NEURON_CORE:
+                        LOG.fatal(
+                            "A Neuron core task timed out: %s (%s)",
+                            task.get_name(),
+                            name,
+                        )
+                        self.stop()
+                    else:
+                        if (
+                            task.cancelling()
+                            and task.elapsed >= 2 * EPHEMERAL_TASK_TIMEOUT
+                        ):
+                            # This is an unsupported state so we crash and exit
+                            raise RuntimeError(
+                                "Timed out task {} ({}) is refusing to die".format(
+                                    task.get_name(),
+                                    name,
+                                ),
+                            )
+
+                        task.cancel()
+
+                        logger.error(
+                            "Killed ephemeral task %s (%s) after timeout (%d seconds)",
+                            task.get_name(),
+                            name,
+                            EPHEMERAL_TASK_TIMEOUT,
+                        )
 
     async def auto_reload_automations_task(self):
         try:
@@ -480,6 +617,8 @@ class Neuron:
 
         LOG.info("Disabling automation %r", automation.name)
 
+        automation.cancel_tasks()  # Cancel any in-flight event/trigger handlers
+
         await self.remove_automation_subscriptions(automation)
         automation.enabled = False
         automation.initialized = False
@@ -569,6 +708,8 @@ class Neuron:
 
     async def eject_automation(self, automation: Automation):
         LOG.info("Ejecting automation: %s", automation.module_name)
+
+        automation.cancel_tasks()  # Cancel any in-flight event/trigger handlers
 
         if automation.initialized:
             await self.remove_automation_subscriptions(automation)
@@ -938,6 +1079,9 @@ class Automation:
     entities: dict[str, Entity]
     managed_entities: dict[str, ManagedEntity]
 
+    tasks: list[NeuronTask]
+    """Holds temporary tasks running the automation's event handlers"""
+
     def __init__(self, module_path: Path, enabled: bool = True):
         package_path = module_path.parent.parent
         self.module_name = f"{package_path.name}.automations.{module_path.stem}"
@@ -951,6 +1095,7 @@ class Automation:
         self.event_handlers = []
         self.entities = {}
         self.managed_entities = {}
+        self.tasks = []
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.module_name!r}>"
@@ -1001,3 +1146,14 @@ class Automation:
         finally:
             neuron.api._logger.reset(logger_restore)
             neuron.api._automation.reset(automation_restore)
+
+    def cancel_tasks(self):
+        for task in list(self.tasks):
+            if not task.done():
+                task.cancel()
+
+                self.logger.warning(
+                    "Cancelled task %s (%s) because the automation is being disabled or unloaded",
+                    task.get_name(),
+                    getattr(task.get_coro(), "__qualname__", "???"),
+                )
