@@ -207,6 +207,18 @@ class ManagedEntities:
                             )
                             break
 
+            case bus.SelectValueChanged():
+                for automation, managed_entity in self.all_managed_entities():
+                    match managed_entity:
+                        case api.ManagedSelect(unique_id=message.unique_id):
+                            await managed_entity.set_value(
+                                message.value,
+                                suppress_handler=bool(
+                                    automation and not automation.initialized
+                                ),
+                            )
+                            break
+
             case bus.ButtonPressed():
                 for automation, managed_entity in self.all_managed_entities():
                     match managed_entity:
@@ -240,6 +252,7 @@ class ManagedEntities:
         managed_sensors = []
         managed_buttons = []
         managed_numbers = []
+        managed_selects = []
 
         for automation, entity in self.all_managed_entities():
             match entity:
@@ -294,6 +307,17 @@ class ManagedEntities:
                         )
                     )
 
+                case api.ManagedSelect():
+                    managed_selects.append(
+                        bus.ManagedSelect(
+                            unique_id=entity.unique_id,
+                            friendly_name=entity.friendly_name or entity.name,
+                            value=entity.value,
+                            automation=automation.name if automation else None,
+                            options=list(entity.options),
+                        )
+                    )
+
                 case api.ManagedButton():
                     managed_buttons.append(
                         bus.ManagedButton(
@@ -309,6 +333,7 @@ class ManagedEntities:
             managed_sensors=managed_sensors,
             managed_buttons=managed_buttons,
             managed_numbers=managed_numbers,
+            managed_selects=managed_selects,
         )
 
         LOG.info(

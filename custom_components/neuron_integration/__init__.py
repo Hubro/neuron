@@ -14,7 +14,7 @@ from .util import neuron_context, neuron_device_info, send_message
 __all__ = ["DOMAIN", "async_setup_entry", "async_unload_entry"]
 
 LOG = logging.getLogger(__name__)
-PLATFORMS = ["switch", "binary_sensor", "sensor", "button", "number"]
+PLATFORMS = ["switch", "binary_sensor", "sensor", "button", "number", "select"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -110,5 +110,6 @@ def setup_entities(hass: HomeAssistant, message: bus.FullUpdate):
     data.add_sensors(message.managed_sensors)
     data.add_buttons(message.managed_buttons)
     data.add_numbers(message.managed_numbers)
+    data.add_selects(message.managed_selects)
 
     data.entities_created = True

@@ -84,6 +84,12 @@ class NumberValueChanged(NeuronIntegrationMessage):
     value: float = Field(strict=True, allow_inf_nan=False)
 
 
+class SelectValueChanged(NeuronIntegrationMessage):
+    type: Literal["select-value-changed"] = "select-value-changed"
+    unique_id: str
+    value: str
+
+
 class ButtonPressed(NeuronIntegrationMessage):
     """Informs Neuron that a managed button was pressed"""
 
@@ -119,6 +125,7 @@ class FullUpdate(NeuronCoreMessage):
     managed_sensors: list[ManagedSensor]
     managed_buttons: list[ManagedButton]
     managed_numbers: list[ManagedNumber] = Field(default_factory=list)
+    managed_selects: list[ManagedSelect] = Field(default_factory=list)
 
 
 class InternalStateDump(NeuronCoreMessage):
@@ -169,6 +176,14 @@ class ManagedNumber(BaseModel):
     mode: NumberMode
 
 
+class ManagedSelect(BaseModel):
+    unique_id: str
+    friendly_name: str | None
+    automation: str | None
+    value: str | None
+    options: list[str]
+
+
 class ManagedButton(BaseModel):
     unique_id: str
     friendly_name: str | None
@@ -186,6 +201,7 @@ Message = (
     | SwitchTurnedOn
     | SwitchTurnedOff
     | NumberValueChanged
+    | SelectValueChanged
     | ButtonPressed
     | FullUpdate
     | InternalStateDump
