@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterator, Self, cast
 
@@ -35,6 +36,7 @@ class ManagedEntities:
 
         self._stop = asyncio.Event()
         self._managed_entities = {}
+        self.validate_at: float | None = None
 
     async def run(self):
         """Main loop of the managed entities handler, should be run as a task"""
@@ -59,6 +61,7 @@ class ManagedEntities:
                 async with wait_event(stop, tick) as event:
                     if event is tick:
                         await self.refresh_core_entities()
+                        await self.validate_managed_entities()
 
                     elif event is stop:
                         LOG.info("Got exit signal, stopping gracefully")
@@ -122,6 +125,25 @@ class ManagedEntities:
                     value,
                 )
                 await sensor.set_value(value)
+
+    async def validate_managed_entities(self):
+        """Logs an error if any managed entities were not created in Home Assistant"""
+
+        if self.validate_at is not None and time.monotonic() - self.validate_at >= 10:
+            LOG.debug("Validating managed entities")
+
+            self.validate_at = None
+
+            hass_states = await self.neuron.hass_state_proxy.all_states(
+                force_refresh=True
+            )
+
+            for _, entity in self.all_managed_entities():
+                if entity.unique_id not in hass_states:
+                    LOG.error(
+                        "Managed entity %r has not been created in Home Assistant",
+                        entity.unique_id,
+                    )
 
     async def handle_message_event(self, event_type: str, event: dict[str, Any]):
         """Event handler for messages from the Neuron integration"""
@@ -198,6 +220,8 @@ class ManagedEntities:
 
     async def emit_full_update(self):
         """Emits a full state update of Neuron's managed entities"""
+
+        self.validate_at = time.monotonic()
 
         managed_switches = []
         managed_binary_sensors = []
