@@ -36,6 +36,7 @@ class ManagedSensor(SensorEntity):
         unique_id: str,
         value: StateType | datetime | date | Decimal,
         friendly_name: str | None,
+        unit_of_measurement: str | None,
     ) -> None:
         self.hass = hass
         self.automation = automation
@@ -47,6 +48,7 @@ class ManagedSensor(SensorEntity):
         self.should_poll = False
 
         self._attr_native_value = value
+        self._attr_native_unit_of_measurement = unit_of_measurement
 
         # Registry properties: https://developers.home-assistant.io/docs/core/entity#registry-properties
         if self.automation:
@@ -84,8 +86,15 @@ class ManagedSensor(SensorEntity):
             case bus.FullUpdate():
                 for sensor_entity in message.managed_sensors:
                     if sensor_entity.unique_id == self.unique_id:
-                        if self._attr_native_value is not sensor_entity.value:
+                        if (
+                            self._attr_native_value != sensor_entity.value
+                            or self.native_unit_of_measurement
+                            != sensor_entity.unit_of_measurement
+                        ):
                             self._attr_native_value = sensor_entity.value
+                            self._attr_native_unit_of_measurement = (
+                                sensor_entity.unit_of_measurement
+                            )
                             LOG.info(
                                 "Managed sensor %r value set to %r from Neuron full update",
                                 self.unique_id,

@@ -195,6 +195,18 @@ class ManagedEntities:
                             )
                             break
 
+            case bus.NumberValueChanged():
+                for automation, managed_entity in self.all_managed_entities():
+                    match managed_entity:
+                        case api.ManagedNumber(unique_id=message.unique_id):
+                            await managed_entity.set_value(
+                                message.value,
+                                suppress_handler=bool(
+                                    automation and not automation.initialized
+                                ),
+                            )
+                            break
+
             case bus.ButtonPressed():
                 for automation, managed_entity in self.all_managed_entities():
                     match managed_entity:
@@ -227,6 +239,7 @@ class ManagedEntities:
         managed_binary_sensors = []
         managed_sensors = []
         managed_buttons = []
+        managed_numbers = []
 
         for automation, entity in self.all_managed_entities():
             match entity:
@@ -260,8 +273,24 @@ class ManagedEntities:
                             automation=automation.name if automation else None,
                             device_class=entity.device_class,
                             state_class=entity.state_class,
-                            native_unit_of_measurement=entity.native_unit_of_measurement,
+                            unit_of_measurement=entity.unit_of_measurement,
                             suggested_unit_of_measurement=entity.suggested_unit_of_measurement,
+                        )
+                    )
+
+                case api.ManagedNumber():
+                    managed_numbers.append(
+                        bus.ManagedNumber(
+                            unique_id=entity.unique_id,
+                            friendly_name=entity.friendly_name or entity.name,
+                            value=entity.value,
+                            automation=automation.name if automation else None,
+                            min_value=entity.min_value,
+                            max_value=entity.max_value,
+                            step=entity.step,
+                            unit_of_measurement=entity.unit_of_measurement,
+                            device_class=entity.device_class,
+                            mode=entity.mode,
                         )
                     )
 
@@ -279,6 +308,7 @@ class ManagedEntities:
             managed_binary_sensors=managed_binary_sensors,
             managed_sensors=managed_sensors,
             managed_buttons=managed_buttons,
+            managed_numbers=managed_numbers,
         )
 
         LOG.info(

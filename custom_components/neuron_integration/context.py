@@ -3,6 +3,7 @@ from typing import Any, Callable, Iterable
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.button import ButtonEntity
+from homeassistant.components.number import NumberEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
@@ -20,10 +21,12 @@ class NeuronIntegrationContext:
     add_binary_sensor_entities: AddEntitiesCallback | None = None
     add_sensor_entities: AddEntitiesCallback | None = None
     add_button_entities: AddEntitiesCallback | None = None
+    add_number_entities: AddEntitiesCallback | None = None
     switches: list[SwitchEntity] = field(default_factory=list)
     binary_sensors: list[BinarySensorEntity] = field(default_factory=list)
     sensors: list[SensorEntity] = field(default_factory=list)
     buttons: list[ButtonEntity] = field(default_factory=list)
+    numbers: list[NumberEntity] = field(default_factory=list)
     entities_created: bool = False
 
     def add_switches(self, switches: Iterable[bus.ManagedSwitch]):
@@ -91,6 +94,7 @@ class NeuronIntegrationContext:
                 unique_id=x.unique_id,
                 value=x.value,
                 friendly_name=x.friendly_name,
+                unit_of_measurement=x.unit_of_measurement,
             )
             for x in sensors
             if x.unique_id not in existing_sensors
@@ -125,3 +129,21 @@ class NeuronIntegrationContext:
 
         self.add_button_entities(new_button_entities)
         self.buttons.extend(new_button_entities)
+
+    def add_numbers(self, numbers: Iterable[bus.ManagedNumber]):
+        assert self.add_number_entities
+
+        from .number import ManagedNumber
+
+        existing_numbers = {x.unique_id for x in self.numbers}
+        new_number_entities = [
+            ManagedNumber(self.hass, number)
+            for number in numbers
+            if number.unique_id not in existing_numbers
+        ]
+
+        if not new_number_entities:
+            return
+
+        self.add_number_entities(new_number_entities)
+        self.numbers.extend(new_number_entities)

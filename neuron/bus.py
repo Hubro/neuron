@@ -16,12 +16,15 @@ try:
     # Neuron addon:
     from neuron.api import (
         BinarySensorDeviceClass,
+        NumberDeviceClass,
+        NumberMode,
         SensorDeviceClass,
         SensorStateClass,
     )
 except ImportError:
     # Neuron integration:
     from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+    from homeassistant.components.number import NumberDeviceClass, NumberMode
     from homeassistant.components.sensor.const import (
         SensorDeviceClass,
         SensorStateClass,
@@ -75,6 +78,12 @@ class SwitchTurnedOff(NeuronIntegrationMessage):
     unique_id: str
 
 
+class NumberValueChanged(NeuronIntegrationMessage):
+    type: Literal["number-value-changed"] = "number-value-changed"
+    unique_id: str
+    value: float = Field(strict=True, allow_inf_nan=False)
+
+
 class ButtonPressed(NeuronIntegrationMessage):
     """Informs Neuron that a managed button was pressed"""
 
@@ -109,6 +118,7 @@ class FullUpdate(NeuronCoreMessage):
     managed_binary_sensors: list[ManagedBinarySensor]
     managed_sensors: list[ManagedSensor]
     managed_buttons: list[ManagedButton]
+    managed_numbers: list[ManagedNumber] = Field(default_factory=list)
 
 
 class InternalStateDump(NeuronCoreMessage):
@@ -142,8 +152,21 @@ class ManagedSensor(BaseModel):
     automation: str | None  # None means that the entity is managed by Neuron core
     device_class: SensorDeviceClass | None
     state_class: SensorStateClass | None
-    native_unit_of_measurement: str | None
+    unit_of_measurement: str | None
     suggested_unit_of_measurement: str | None
+
+
+class ManagedNumber(BaseModel):
+    unique_id: str
+    friendly_name: str | None
+    automation: str | None
+    value: float | None
+    min_value: float
+    max_value: float
+    step: float | None
+    unit_of_measurement: str | None
+    device_class: NumberDeviceClass | None
+    mode: NumberMode
 
 
 class ManagedButton(BaseModel):
@@ -162,6 +185,7 @@ Message = (
     | RequestingInternalStateDump
     | SwitchTurnedOn
     | SwitchTurnedOff
+    | NumberValueChanged
     | ButtonPressed
     | FullUpdate
     | InternalStateDump
