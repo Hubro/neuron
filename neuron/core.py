@@ -25,12 +25,13 @@ from typing import (
 import neuron.api
 import neuron.bus
 
-from .api import Entity, ManagedEntity, StateChange
+from .api import Entity, StateChange
 from .config import Config, load_config
 from .hass import HASS
 from .hass_state_proxy import HASSStateProxy
 from .logging import NeuronLogger, get_logger
 from .managed_entities import ManagedEntities
+from .managed_entity_platforms.base import ManagedEntity
 from .state import AutomationState, NeuronState
 from .util import (
     NEURON_CORE,

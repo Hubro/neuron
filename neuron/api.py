@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from decimal import Decimal
+from datetime import timedelta
 from functools import wraps
-from math import floor, isfinite
+from math import floor
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -37,10 +35,10 @@ from neuron.hass_const import (
 )
 from neuron.logging import NeuronLogger, get_logger
 from neuron.throttle import throttle
-from neuron.util import filter_keyword_args
 
 if TYPE_CHECKING:
     from neuron.core import Neuron
+    from neuron.managed_entity_platforms.base import ManagedEntity
 
 __all__ = [
     "on_state_change",
@@ -209,8 +207,8 @@ async def _subscribe(
     *,
     to: str | dict[str, Any],
 ) -> SubscriptionHandle:
-    _l().info("Subscribing handler %r to %r", handler.__name__, to)
-    await _n().subscribe(_automation.get(), handler, to=to)
+    get_automation_logger().info("Subscribing handler %r to %r", handler.__name__, to)
+    await get_neuron().subscribe(_automation.get(), handler, to=to)
     return (to, handler)
 
 
@@ -248,7 +246,7 @@ def on_event(event: str = "*", **filter: Any):
                 if event_value != expected_value:
                     return
 
-            _l().info(
+            get_automation_logger().info(
                 "Executing event handler: %s", handler.__name__, extra={"data": event}
             )
             await handler(*args, **kwargs)
@@ -332,9 +330,11 @@ async def unsubscribe(handle: SubscriptionHandle):
 
     event_or_trigger, handler = handle
 
-    _l().info("Unsubscribing handler %r from %r", handler.__name__, event_or_trigger)
+    get_automation_logger().info(
+        "Unsubscribing handler %r from %r", handler.__name__, event_or_trigger
+    )
 
-    await _n().unsubscribe(handler, event_or_trigger)
+    await get_neuron().unsubscribe(handler, event_or_trigger)
 
 
 async def action(
@@ -358,7 +358,7 @@ async def action(
     target = {"entity_id": entity_id} if entity_id else None
 
     if target:
-        _l().info(
+        get_automation_logger().info(
             "Performing action %s.%s on %r",
             domain,
             name,
@@ -366,14 +366,16 @@ async def action(
             extra={"component": "api", "data": data},
         )
     else:
-        _l().info(
+        get_automation_logger().info(
             "Performing action %s.%s",
             domain,
             name,
             extra={"component": "api", "data": data},
         )
 
-    return await _n().hass.perform_action(domain, name, target=target, data=data)
+    return await get_neuron().hass.perform_action(
+        domain, name, target=target, data=data
+    )
 
 
 async def turn_on(entity: EntityTarget, platform="homeassistant", **kwargs):
@@ -425,14 +427,22 @@ def _entity_id(entity: EntityTarget | None) -> str | list[str] | None:
     return entity  # type: ignore
 
 
-def _n() -> Neuron:
+def register_managed_entity(entity: ManagedEntity) -> None:
+    """Register an entity if an automation is being loaded."""
+    if _automation.get(None):
+        _managed_entities[entity.unique_id] = entity
+
+
+def get_neuron() -> Neuron:
+    """Return the running Neuron instance."""
     if not _neuron:
         raise RuntimeError("Tried to use automation API before Neuron setup")
 
     return _neuron
 
 
-def _l() -> NeuronLogger:
+def get_automation_logger() -> NeuronLogger:
+    """Return the logger for the current automation."""
     return _logger.get()
 
 
@@ -468,7 +478,7 @@ class Entity:
         _entities[entity_id] = self
 
     def __repr__(self) -> str:
-        if self.entity_id in _n().hass_state_proxy.watched_entities:
+        if self.entity_id in get_neuron().hass_state_proxy.watched_entities:
             state = self.state
         else:
             state = "?"
@@ -499,11 +509,11 @@ class Entity:
 
     @property
     def state(self) -> str:
-        return _n().hass_state_proxy.get_state(self.entity_id)
+        return get_neuron().hass_state_proxy.get_state(self.entity_id)
 
     @property
     def attributes(self) -> Mapping[str, Any]:
-        return _n().hass_state_proxy.get_attributes(self.entity_id)
+        return get_neuron().hass_state_proxy.get_attributes(self.entity_id)
 
     @property
     def is_locked(self) -> bool:
@@ -640,569 +650,6 @@ class Entity:
         await self.action("stop_cover", data=data)
 
 
-# TODO: Allow managed entities to be created at runtime
-class ManagedEntity(ABC):
-    """Base class for entities created and managed by Neuron"""
-
-    unique_id: str
-    domain: str
-    name: str
-    friendly_name: str | None
-
-    _value: Any  # Depends on the entity type
-
-    def __init__(
-        self,
-        unique_id: str,
-        initial_value: Any = None,
-        friendly_name: str | None = None,
-    ):
-        assert unique_id.count(".") == 1, "unique_id must contain 1 period symbol"
-
-        self.unique_id = unique_id
-        self.domain, self.name = unique_id.split(".")
-        self.friendly_name = friendly_name
-
-        if x := _n().state.managed_entity_states.get(unique_id):
-            _l().info(
-                "Setting up managed entity %r with value from persistent state %r",
-                unique_id,
-                x.value,
-            )
-            self._value = x.value
-        else:
-            _l().info(
-                "Setting up managed entity %r with initial value (%r)",
-                unique_id,
-                initial_value,
-            )
-            self._value = initial_value
-
-        # Only register managed entities while loading an automation, that way
-        # Neuron Core can use this API as well.
-        if _automation.get(None):
-            _managed_entities[unique_id] = self
-
-    def __repr__(self) -> str:
-        return f"<{type(self).__name__} {self.unique_id!r}>"
-
-    @abstractmethod
-    async def _on_change(self, change: ValueChange):
-        raise NotImplementedError("Subclasses should override this method")
-
-    @property
-    def value(self) -> Any:
-        return self._value
-
-    async def _set_value(self, value: Any, *, suppress_handler: bool = False):
-        """Sets the value of this managed entity and transmits it to the integration
-
-        If suppress_handler is True, the _on_change handler won't be called.
-        This is used when the automation is disabled, allowing the managed
-        entities to keep working and have the correct value when the
-        automation is resumed.
-        """
-
-        old_value = self._value
-
-        if value == old_value:
-            return
-
-        self._value = value
-
-        # TODO: Attributes
-
-        await _n().managed_entities.set_value(self.unique_id, value)
-
-        if not suppress_handler:
-            await self._on_change(
-                **filter_keyword_args(
-                    self._on_change,
-                    {
-                        "change": ValueChange(
-                            from_value=old_value,
-                            to_value=value,
-                        ),
-                        "log": _l(),
-                    },
-                )
-            )
-
-
-class ManagedSwitch(ManagedEntity):
-    """A switch entity created and managed by Neuron
-
-    Usage:
-
-        my_switch = ManagedSwitch("shields_up")
-
-        @my_switch.turned_on
-        async def on(log: NeuronLogger):
-            log.info("Shields are up!")
-
-        @my_switch.turned_off
-        async def off(log: NeuronLogger):
-            log.info("Shields down")
-    """
-
-    _turned_on_handler: AsyncFunction | None
-    _turned_off_handler: AsyncFunction | None
-    _value: bool | None
-
-    def __init__(
-        self,
-        name: str,
-        initial_value: Literal["on", "off", True, False] | None,
-        friendly_name: str | None = None,
-    ):
-        assert "." not in name, "Name can not contain period symbol"
-
-        self._turned_on_handler = None
-        self._turned_off_handler = None
-
-        super().__init__(
-            unique_id=f"switch.{name}",
-            initial_value=None
-            if initial_value is None
-            else initial_value in [True, "on"],
-            friendly_name=friendly_name,
-        )
-
-    async def _on_change(self, change: ValueChange[bool | None]):
-        assert change.from_value != change.to_value
-
-        if change.to_value is True and self._turned_on_handler is not None:
-            kwargs = filter_keyword_args(
-                self._turned_on_handler, {"log": _l(), "switch": self}
-            )
-            await self._turned_on_handler(**kwargs)
-
-        elif change.to_value is False and self._turned_off_handler is not None:
-            kwargs = filter_keyword_args(
-                self._turned_off_handler, {"log": _l(), "switch": self}
-            )
-            await self._turned_off_handler(**kwargs)
-
-    @property
-    def value(self) -> bool | None:
-        return self._value
-
-    @property
-    def is_on(self) -> bool:
-        return self._value is True
-
-    @property
-    def is_off(self) -> bool:
-        return self._value is False
-
-    @overload
-    def when_turned_on(self, handler: None = None) -> Decorator: ...
-
-    @overload
-    def when_turned_on(self, handler: AsyncFunction) -> None: ...
-
-    # Rename to "when_turned_on"?
-    def when_turned_on(self, handler: AsyncFunction | None = None):
-        def decorator(handler: AsyncFunction, /):
-            self._turned_on_handler = handler
-
-            return handler
-
-        if handler:
-            decorator(handler)
-        else:
-            return decorator
-
-    @overload
-    def when_turned_off(self, handler: None = None) -> Decorator: ...
-
-    @overload
-    def when_turned_off(self, handler: AsyncFunction) -> None: ...
-
-    def when_turned_off(self, handler: AsyncFunction | None = None):
-        def decorator(handler: AsyncFunction, /):
-            self._turned_off_handler = handler
-
-            return handler
-
-        if handler:
-            decorator(handler)
-        else:
-            return decorator
-
-    async def turn_on(self):
-        await self.set_value(True)
-
-    async def turn_off(self):
-        await self.set_value(False)
-
-    async def toggle(self) -> bool:
-        """Toggles the switch and returns the new toggled state"""
-
-        if self.is_on:
-            await self.turn_off()
-            return False
-        else:
-            await self.turn_on()
-            return True
-
-    async def set_value(
-        self,
-        value: Literal[True, "on", False, "off"] | str | None,
-        **kwargs,
-    ):
-        """Set the value of the managed switch
-
-        The type also allows "str" to allow setting the value of another
-        switch directly. Values must be "on", "off", or None.
-        """
-
-        assert value in [True, "on", False, "off", None]
-
-        await self._set_value(
-            None if value is None else value in [True, "on"], **kwargs
-        )
-
-
-class ManagedBinarySensor(ManagedEntity):
-    """A binary sensor entity created and managed by Neuron"""
-
-    _value: bool | None
-
-    def __init__(
-        self,
-        name: str,
-        initial_value: Literal["on", "off", True, False] | None,
-        friendly_name: str | None = None,
-        device_class: BinarySensorDeviceClass | None = None,
-    ):
-        assert "." not in name, "Name can not contain period symbol"
-
-        self.device_class = device_class
-
-        super().__init__(
-            unique_id=f"binary_sensor.{name}",
-            initial_value=None
-            if initial_value is None
-            else initial_value in [True, "on"],
-            friendly_name=friendly_name,
-        )
-
-    @property
-    def value(self) -> bool | None:
-        return self._value
-
-    @property
-    def is_on(self) -> bool:
-        return self._value is True
-
-    @property
-    def is_off(self) -> bool:
-        return self._value is False
-
-    async def set_value(
-        self,
-        value: Literal[True, "on", False, "off"] | str | None,
-        **kwargs,
-    ):
-        assert value in [True, "on", False, "off", None]
-
-        await self._set_value(
-            None if value is None else value in [True, "on"], **kwargs
-        )
-
-    async def _on_change(self, change: ValueChange[bool | None]):
-        assert change.from_value != change.to_value
-
-
-SensorValue: TypeAlias = str | int | float | date | datetime | Decimal | None
-
-
-class ManagedSensor[T = SensorValue](ManagedEntity):
-    """A sensor entity created and managed by Neuron
-
-    Usage:
-
-        my_sensor = ManagedSensor("price_of_eggs", initial_value=0.12)
-
-        def init():
-            await my_sensor.set_value(999.99)
-
-            # Or
-            await my_sensor.set_state("999.99")
-    """
-
-    _value: T | None
-
-    def __init__(
-        self,
-        name: str,
-        initial_value: T | None,
-        friendly_name: str | None = None,
-        device_class: SensorDeviceClass | None = None,
-        state_class: SensorStateClass | None = None,
-        unit_of_measurement: str | None = None,
-        suggested_unit_of_measurement: str | None = None,
-    ):
-        assert "." not in name, "Name can not contain period symbol"
-
-        self.device_class = device_class
-        self.state_class = state_class
-        self.unit_of_measurement = unit_of_measurement
-        self.suggested_unit_of_measurement = suggested_unit_of_measurement
-
-        super().__init__(
-            unique_id=f"sensor.{name}",
-            initial_value=initial_value,
-            friendly_name=friendly_name,
-        )
-
-    @property
-    def value(self) -> T | None:
-        return self._value
-
-    async def set_value(self, value: T | None, **kwargs):
-        await self._set_value(value, **kwargs)
-
-    async def _on_change(self, change: ValueChange[T | None]):
-        assert change.from_value != change.to_value
-
-
-class ManagedNumber(ManagedEntity):
-    """An editable number. Values and bounds use the configured unit.
-
-    Values outside the bounds raise ValueError, including restored values.
-    None represents an unknown value. Step sets the UI increment, not rounding.
-    """
-
-    _value: float | None
-
-    def __init__(
-        self,
-        name: str,
-        initial_value: float | None,
-        friendly_name: str | None = None,
-        *,
-        min_value: float = 0,
-        max_value: float = 100,
-        step: float | None = None,
-        unit_of_measurement: str | None = None,
-        device_class: NumberDeviceClass | None = None,
-        mode: NumberMode = NumberMode.AUTO,
-    ):
-        assert "." not in name, "Name can not contain period symbol"
-
-        for key, value in {"min_value": min_value, "max_value": max_value}.items():
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not isfinite(value)
-            ):
-                raise ValueError(f"{key} must be a finite number")
-        if min_value >= max_value:
-            raise ValueError("min_value must be less than max_value")
-        if step is not None and (
-            isinstance(step, bool)
-            or not isinstance(step, (int, float))
-            or not isfinite(step)
-            or step <= 0
-        ):
-            raise ValueError("step must be a positive finite number")
-
-        self.min_value = min_value
-        self.max_value = max_value
-        self.step = step
-        self.unit_of_measurement = unit_of_measurement
-        self.device_class = device_class
-        self.mode = NumberMode(mode)
-        self._handler: AsyncFunction | None = None
-
-        self._validate_value(initial_value)
-        if state := _n().state.managed_entity_states.get(f"number.{name}"):
-            self._validate_value(state.value)
-
-        super().__init__(
-            unique_id=f"number.{name}",
-            initial_value=initial_value,
-            friendly_name=friendly_name,
-        )
-
-    def _validate_value(self, value: float | None):
-        if value is None:
-            return
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not isfinite(value)
-            or not self.min_value <= value <= self.max_value
-        ):
-            raise ValueError(
-                f"Value must be a finite number between {self.min_value} and "
-                f"{self.max_value}, or None, got {value!r}"
-            )
-
-    @property
-    def value(self) -> float | None:
-        return self._value
-
-    async def set_value(self, value: float | None, **kwargs):
-        self._validate_value(value)
-        await self._set_value(value, **kwargs)
-
-    @overload
-    def when_changed(self, handler: None = None) -> Decorator: ...
-
-    @overload
-    def when_changed(self, handler: AsyncFunction) -> AsyncFunction: ...
-
-    def when_changed(self, handler: AsyncFunction | None = None):
-        """Register an async handler accepting change, number, and/or log."""
-
-        def decorator(handler: AsyncFunction, /):
-            self._handler = handler
-            return handler
-
-        return decorator(handler) if handler is not None else decorator
-
-    async def _on_change(self, change: ValueChange[float | None]):
-        if self._handler is not None:
-            await self._handler(
-                **filter_keyword_args(
-                    self._handler,
-                    {"change": change, "number": self, "log": _l()},
-                )
-            )
-
-
-class ManagedSelect(ManagedEntity):
-    """An editable choice from a fixed list of options.
-
-    None represents an unknown value. Values outside the options raise
-    ValueError, including restored values.
-    """
-
-    _value: str | None
-
-    def __init__(
-        self,
-        name: str,
-        initial_value: str | None,
-        friendly_name: str | None = None,
-        *,
-        options: Sequence[str],
-    ):
-        assert "." not in name, "Name can not contain period symbol"
-
-        if isinstance(options, str) or not options:
-            raise ValueError("options must be a non-empty sequence of strings")
-        if any(not isinstance(option, str) or not option for option in options):
-            raise ValueError("Each option must be a non-empty string")
-        if len(set(options)) != len(options):
-            raise ValueError("options must be unique")
-
-        self.options = tuple(options)
-        self._handler: AsyncFunction | None = None
-        self._validate_value(initial_value)
-        if state := _n().state.managed_entity_states.get(f"select.{name}"):
-            self._validate_value(state.value)
-
-        super().__init__(
-            unique_id=f"select.{name}",
-            initial_value=initial_value,
-            friendly_name=friendly_name,
-        )
-
-    def _validate_value(self, value: str | None):
-        if value is not None and value not in self.options:
-            raise ValueError(
-                f"Value must be one of {self.options!r}, or None, got {value!r}"
-            )
-
-    @property
-    def value(self) -> str | None:
-        return self._value
-
-    async def set_value(self, value: str | None, **kwargs):
-        self._validate_value(value)
-        await self._set_value(value, **kwargs)
-
-    @overload
-    def when_changed(self, handler: None = None) -> Decorator: ...
-
-    @overload
-    def when_changed(self, handler: AsyncFunction) -> AsyncFunction: ...
-
-    def when_changed(self, handler: AsyncFunction | None = None):
-        """Register an async handler accepting change, select, and/or log."""
-
-        def decorator(handler: AsyncFunction, /):
-            self._handler = handler
-            return handler
-
-        return decorator(handler) if handler is not None else decorator
-
-    async def _on_change(self, change: ValueChange[str | None]):
-        if self._handler is not None:
-            await self._handler(
-                **filter_keyword_args(
-                    self._handler,
-                    {"change": change, "select": self, "log": _l()},
-                )
-            )
-
-
-class ManagedButton(ManagedEntity):
-    """A button entity created and managed by Neuron
-
-    Usage:
-
-        my_button = ManagedButton("launch_missiles", friendly_name="Send friendly reminder")
-
-        @my_button.when_pressed
-        async def launch(log):
-            log.info("The eagle has left the nest")
-    """
-
-    def __init__(
-        self,
-        name: str,
-        friendly_name: str | None = None,
-    ):
-        assert "." not in name, "Name can not contain period symbol"
-
-        self._handler: AsyncFunction | None = None
-
-        super().__init__(
-            unique_id=f"button.{name}",
-            friendly_name=friendly_name,
-        )
-
-    @property
-    def value(self):
-        raise NotImplementedError("Buttons have no value")
-
-    async def _on_change(self, *args, **kwargs):
-        raise NotImplementedError("Buttons have no value to change")
-
-    def when_pressed(self, fn: AsyncFunction | None):
-        def decorator(fn: AsyncFunction):
-            self._handler = fn
-            return fn
-
-        if fn:
-            return decorator(fn)
-        else:
-            return decorator
-
-    async def press(self):
-        """Executes the event handler set with 'when_pressed'"""
-
-        _l().info("Managed button pressed: %r", self)
-
-        if self._handler:
-            await self._handler()
-
-
 @dataclass
 class StateChange:
     from_state: str | None
@@ -1319,14 +766,23 @@ class StateChange:
         # }
 
 
-@dataclass
-class ValueChange[T = Any]:
-    from_value: T
-    to_value: T
-
-
 AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
 EntityTarget: TypeAlias = str | Entity | Sequence[str | Entity]
 SubscriptionHandle: TypeAlias = tuple[str | dict, AsyncFunction]
 HandlerFn = TypeVar("HandlerFn", default=AsyncFunction)
 Decorator: TypeAlias = Callable[[HandlerFn], HandlerFn]
+
+
+# Platforms import the helpers and types above, so these imports must stay last.
+from neuron.managed_entity_platforms.base import ValueChange  # noqa: E402
+from neuron.managed_entity_platforms.binary_sensor import (  # noqa: E402
+    ManagedBinarySensor,
+)
+from neuron.managed_entity_platforms.button import ManagedButton  # noqa: E402
+from neuron.managed_entity_platforms.number import ManagedNumber  # noqa: E402
+from neuron.managed_entity_platforms.select import ManagedSelect  # noqa: E402
+from neuron.managed_entity_platforms.sensor import (  # noqa: E402
+    ManagedSensor,
+    SensorValue,
+)
+from neuron.managed_entity_platforms.switch import ManagedSwitch  # noqa: E402

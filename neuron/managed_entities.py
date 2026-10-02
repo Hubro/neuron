@@ -8,11 +8,18 @@ import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterator, Self, cast
 
-from neuron import debounce
+from neuron.debounce import debounce
+from neuron.managed_entity_platforms.base import ManagedEntity
+from neuron.managed_entity_platforms.binary_sensor import ManagedBinarySensor
+from neuron.managed_entity_platforms.button import ManagedButton
+from neuron.managed_entity_platforms.number import ManagedNumber
+from neuron.managed_entity_platforms.select import ManagedSelect
+from neuron.managed_entity_platforms.sensor import ManagedSensor
+from neuron.managed_entity_platforms.switch import ManagedSwitch
 from neuron.state import ManagedEntityState
 from neuron.util import NEURON_CORE, Clock, wait_event
 
-from . import api, bus
+from . import bus
 from .logging import get_logger
 
 LOG = get_logger(__name__)
@@ -26,7 +33,7 @@ class ManagedEntities:
     """Handles managed entities"""
 
     neuron: Neuron
-    _managed_entities: dict[str, api.ManagedEntity]
+    _managed_entities: dict[str, ManagedEntity]
 
     _stop: asyncio.Event
     """Signals graceful shutdown"""
@@ -79,7 +86,7 @@ class ManagedEntities:
         stats = NeuronCoreStats.resolve(self.neuron)
 
         for stat, value in asdict(stats).items():
-            self._managed_entities[stat] = api.ManagedSensor(
+            self._managed_entities[stat] = ManagedSensor(
                 f"neuron_core_{stat}", initial_value=value
             )
 
@@ -90,7 +97,7 @@ class ManagedEntities:
         await self.emit_full_update_debounced()
 
     async def create_automation_toggle_switch(self, automation: Automation):
-        automation_enabled = api.ManagedSwitch(
+        automation_enabled = ManagedSwitch(
             f"neuron_automation_{automation.name}_enabled",
             friendly_name=f"Neuron - {automation.name} - Enabled",
             initial_value=automation.enabled,
@@ -116,7 +123,7 @@ class ManagedEntities:
         stats = NeuronCoreStats.resolve(self.neuron)
 
         for stat, value in asdict(stats).items():
-            sensor = cast(api.ManagedSensor[int], self._managed_entities[stat])
+            sensor = cast(ManagedSensor[int], self._managed_entities[stat])
 
             if sensor.value != value:
                 LOG.info(
@@ -181,7 +188,7 @@ class ManagedEntities:
 
                 for automation, managed_entity in self.all_managed_entities():
                     match managed_entity:
-                        case api.ManagedSwitch(unique_id=message.unique_id):
+                        case ManagedSwitch(unique_id=message.unique_id):
                             old_value = managed_entity.value
 
                             if new_value == old_value:
@@ -198,7 +205,7 @@ class ManagedEntities:
             case bus.NumberValueChanged():
                 for automation, managed_entity in self.all_managed_entities():
                     match managed_entity:
-                        case api.ManagedNumber(unique_id=message.unique_id):
+                        case ManagedNumber(unique_id=message.unique_id):
                             await managed_entity.set_value(
                                 message.value,
                                 suppress_handler=bool(
@@ -210,7 +217,7 @@ class ManagedEntities:
             case bus.SelectValueChanged():
                 for automation, managed_entity in self.all_managed_entities():
                     match managed_entity:
-                        case api.ManagedSelect(unique_id=message.unique_id):
+                        case ManagedSelect(unique_id=message.unique_id):
                             await managed_entity.set_value(
                                 message.value,
                                 suppress_handler=bool(
@@ -222,7 +229,7 @@ class ManagedEntities:
             case bus.ButtonPressed():
                 for automation, managed_entity in self.all_managed_entities():
                     match managed_entity:
-                        case api.ManagedButton(unique_id=message.unique_id):
+                        case ManagedButton(unique_id=message.unique_id):
                             if automation and not automation.initialized:
                                 return
 
@@ -234,7 +241,7 @@ class ManagedEntities:
 
     def all_managed_entities(
         self,
-    ) -> Iterator[tuple[Automation | None, api.ManagedEntity]]:
+    ) -> Iterator[tuple[Automation | None, ManagedEntity]]:
         for entity in self._managed_entities.values():
             yield (None, entity)
 
@@ -256,7 +263,7 @@ class ManagedEntities:
 
         for automation, entity in self.all_managed_entities():
             match entity:
-                case api.ManagedSwitch():
+                case ManagedSwitch():
                     managed_switches.append(
                         bus.ManagedSwitch(
                             unique_id=entity.unique_id,
@@ -266,7 +273,7 @@ class ManagedEntities:
                         )
                     )
 
-                case api.ManagedBinarySensor():
+                case ManagedBinarySensor():
                     managed_binary_sensors.append(
                         bus.ManagedBinarySensor(
                             unique_id=entity.unique_id,
@@ -277,7 +284,7 @@ class ManagedEntities:
                         )
                     )
 
-                case api.ManagedSensor():
+                case ManagedSensor():
                     managed_sensors.append(
                         bus.ManagedSensor(
                             unique_id=entity.unique_id,
@@ -291,7 +298,7 @@ class ManagedEntities:
                         )
                     )
 
-                case api.ManagedNumber():
+                case ManagedNumber():
                     managed_numbers.append(
                         bus.ManagedNumber(
                             unique_id=entity.unique_id,
@@ -307,7 +314,7 @@ class ManagedEntities:
                         )
                     )
 
-                case api.ManagedSelect():
+                case ManagedSelect():
                     managed_selects.append(
                         bus.ManagedSelect(
                             unique_id=entity.unique_id,
@@ -318,7 +325,7 @@ class ManagedEntities:
                         )
                     )
 
-                case api.ManagedButton():
+                case ManagedButton():
                     managed_buttons.append(
                         bus.ManagedButton(
                             unique_id=entity.unique_id,

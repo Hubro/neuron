@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, RootModel
 
 try:
     # Neuron addon:
-    from neuron.api import (
+    from neuron.hass_const import (
         BinarySensorDeviceClass,
         NumberDeviceClass,
         NumberMode,
