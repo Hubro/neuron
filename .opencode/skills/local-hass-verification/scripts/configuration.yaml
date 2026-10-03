@@ -1,0 +1,19 @@
+homeassistant:
+  name: Neuron verification
+  latitude: 0
+  longitude: 0
+  elevation: 0
+  time_zone: UTC
+  unit_system: metric
+http:
+  server_host: 127.0.0.1
+  server_port: 18123
+api:
+websocket_api:
+config:
+onboarding:
+person:
+logger:
+  default: warning
+  logs:
+    custom_components.neuron_integration: info
