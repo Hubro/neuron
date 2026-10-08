@@ -21,6 +21,7 @@ class ManagedButton(ManagedEntity):
         self,
         name: str,
         friendly_name: str | None = None,
+        icon: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
 
@@ -29,6 +30,7 @@ class ManagedButton(ManagedEntity):
         super().__init__(
             unique_id=f"button.{name}",
             friendly_name=friendly_name,
+            icon=icon,
         )
 
     @property

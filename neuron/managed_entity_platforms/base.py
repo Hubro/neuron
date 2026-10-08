@@ -22,6 +22,7 @@ class ManagedEntity(ABC):
     domain: str
     name: str
     friendly_name: str | None
+    icon: str | None
 
     _value: Any  # Depends on the entity type
 
@@ -30,12 +31,14 @@ class ManagedEntity(ABC):
         unique_id: str,
         initial_value: Any = None,
         friendly_name: str | None = None,
+        icon: str | None = None,
     ):
         assert unique_id.count(".") == 1, "unique_id must contain 1 period symbol"
 
         self.unique_id = unique_id
         self.domain, self.name = unique_id.split(".")
         self.friendly_name = friendly_name
+        self.icon = icon
 
         if x := api.get_neuron().state.managed_entity_states.get(unique_id):
             api.get_automation_logger().info(

@@ -37,12 +37,14 @@ class ManagedBinarySensor(BinarySensorEntity):
         value: bool | None,
         friendly_name: str | None,
         device_class: BinarySensorDeviceClass | None,
+        icon: str | None = None,
     ) -> None:
         self.hass = hass
         self.automation = automation
         self.unique_id = unique_id
         self.entity_id = unique_id
         self.name = friendly_name
+        self._attr_icon = icon
         self.should_poll = False
 
         self._attr_is_on = value
@@ -85,8 +87,12 @@ class ManagedBinarySensor(BinarySensorEntity):
             case bus.FullUpdate():
                 for binary_sensor_entity in message.managed_binary_sensors:
                     if binary_sensor_entity.unique_id == self.unique_id:
-                        if self._attr_is_on is not binary_sensor_entity.value:
+                        if (
+                            self._attr_is_on is not binary_sensor_entity.value
+                            or self.icon != binary_sensor_entity.icon
+                        ):
                             self._attr_is_on = binary_sensor_entity.value
+                            self._attr_icon = binary_sensor_entity.icon
                             LOG.info(
                                 "Managed binary sensor %r value set to %r from Neuron full update",
                                 self.unique_id,

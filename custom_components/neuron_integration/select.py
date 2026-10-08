@@ -43,6 +43,7 @@ class ManagedSelect(SelectEntity):
 
     def _apply_update(self, select: bus.ManagedSelect):
         self._attr_name = select.friendly_name
+        self._attr_icon = select.icon
         self._attr_current_option = select.value
         self._attr_options = select.options
 

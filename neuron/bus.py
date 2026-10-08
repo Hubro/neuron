@@ -105,6 +105,7 @@ class ButtonPressed(NeuronIntegrationMessage):
 
 class ManagedBinarySensor(BaseModel):
     unique_id: str
+    icon: str | None = None
     friendly_name: str | None
     automation: str | None  # None means that the entity is managed by Neuron core
     value: bool | None
@@ -145,6 +146,7 @@ class SetValue(NeuronCoreMessage):
 
 class ManagedSwitch(BaseModel):
     unique_id: str
+    icon: str | None = None
     friendly_name: str | None
     automation: str | None  # None means that the entity is managed by Neuron core
     value: bool | None
@@ -153,6 +155,7 @@ class ManagedSwitch(BaseModel):
 
 class ManagedSensor(BaseModel):
     unique_id: str
+    icon: str | None = None
     friendly_name: str | None
     value: SensorValue
     # attributes: dict[str, str]
@@ -165,6 +168,7 @@ class ManagedSensor(BaseModel):
 
 class ManagedNumber(BaseModel):
     unique_id: str
+    icon: str | None = None
     friendly_name: str | None
     automation: str | None
     value: float | None
@@ -178,6 +182,7 @@ class ManagedNumber(BaseModel):
 
 class ManagedSelect(BaseModel):
     unique_id: str
+    icon: str | None = None
     friendly_name: str | None
     automation: str | None
     value: str | None
@@ -186,6 +191,7 @@ class ManagedSelect(BaseModel):
 
 class ManagedButton(BaseModel):
     unique_id: str
+    icon: str | None = None
     friendly_name: str | None
     automation: str | None  # None means that the entity is managed by Neuron core
 

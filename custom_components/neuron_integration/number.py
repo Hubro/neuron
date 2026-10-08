@@ -43,6 +43,7 @@ class ManagedNumber(NumberEntity):
 
     def _apply_update(self, number: bus.ManagedNumber):
         self._attr_name = number.friendly_name
+        self._attr_icon = number.icon
         self._attr_native_value = number.value
         self._attr_native_min_value = number.min_value
         self._attr_native_max_value = number.max_value

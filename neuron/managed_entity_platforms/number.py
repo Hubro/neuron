@@ -31,6 +31,7 @@ class ManagedNumber(ManagedEntity):
         unit_of_measurement: str | None = None,
         device_class: NumberDeviceClass | None = None,
         mode: NumberMode = NumberMode.AUTO,
+        icon: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
 
@@ -67,6 +68,7 @@ class ManagedNumber(ManagedEntity):
             unique_id=f"number.{name}",
             initial_value=initial_value,
             friendly_name=friendly_name,
+            icon=icon,
         )
 
     def _validate_value(self, value: float | None):

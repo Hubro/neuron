@@ -46,6 +46,7 @@ class NeuronIntegrationContext:
                 unique_id=x.unique_id,
                 value=x.value,
                 friendly_name=x.friendly_name,
+                icon=x.icon,
             )
             for x in switches
             if x.unique_id not in existing_switches
@@ -72,6 +73,7 @@ class NeuronIntegrationContext:
                 value=x.value,
                 friendly_name=x.friendly_name,
                 device_class=x.device_class,
+                icon=x.icon,
             )
             for x in binary_sensors
             if x.unique_id not in existing_binary_sensors
@@ -98,6 +100,7 @@ class NeuronIntegrationContext:
                 value=x.value,
                 friendly_name=x.friendly_name,
                 unit_of_measurement=x.unit_of_measurement,
+                icon=x.icon,
             )
             for x in sensors
             if x.unique_id not in existing_sensors
@@ -122,6 +125,7 @@ class NeuronIntegrationContext:
                 automation=x.automation,
                 unique_id=x.unique_id,
                 friendly_name=x.friendly_name,
+                icon=x.icon,
             )
             for x in buttons
             if x.unique_id not in existing_buttons

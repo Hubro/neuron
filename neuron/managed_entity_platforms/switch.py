@@ -33,6 +33,7 @@ class ManagedSwitch(ManagedEntity):
         name: str,
         initial_value: Literal["on", "off", True, False] | None,
         friendly_name: str | None = None,
+        icon: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
 
@@ -45,6 +46,7 @@ class ManagedSwitch(ManagedEntity):
             if initial_value is None
             else initial_value in [True, "on"],
             friendly_name=friendly_name,
+            icon=icon,
         )
 
     async def _on_change(self, change: ValueChange[bool | None]):

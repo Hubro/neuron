@@ -37,6 +37,7 @@ class ManagedSensor(SensorEntity):
         value: StateType | datetime | date | Decimal,
         friendly_name: str | None,
         unit_of_measurement: str | None,
+        icon: str | None = None,
     ) -> None:
         self.hass = hass
         self.automation = automation
@@ -45,6 +46,7 @@ class ManagedSensor(SensorEntity):
 
         # Generic properties: https://developers.home-assistant.io/docs/core/entity#generic-properties
         self.name = friendly_name
+        self._attr_icon = icon
         self.should_poll = False
 
         self._attr_native_value = value
@@ -90,8 +92,10 @@ class ManagedSensor(SensorEntity):
                             self._attr_native_value != sensor_entity.value
                             or self.native_unit_of_measurement
                             != sensor_entity.unit_of_measurement
+                            or self.icon != sensor_entity.icon
                         ):
                             self._attr_native_value = sensor_entity.value
+                            self._attr_icon = sensor_entity.icon
                             self._attr_native_unit_of_measurement = (
                                 sensor_entity.unit_of_measurement
                             )

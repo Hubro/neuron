@@ -41,6 +41,7 @@ class ManagedSwitch(SwitchEntity):
         unique_id: str,
         value: bool | None,
         friendly_name: str | None,
+        icon: str | None = None,
     ) -> None:
         self.hass = hass
         self.automation = automation
@@ -48,6 +49,7 @@ class ManagedSwitch(SwitchEntity):
         self.entity_id = unique_id
         self.is_on = value
         self.name = friendly_name
+        self._attr_icon = icon
 
         # Generic properties: https://developers.home-assistant.io/docs/core/entity#generic-properties
         self.should_poll = False
@@ -90,8 +92,12 @@ class ManagedSwitch(SwitchEntity):
             case bus.FullUpdate():
                 for switch_entity in message.managed_switches:
                     if switch_entity.unique_id == self.unique_id:
-                        if self.is_on is not switch_entity.value:
+                        if (
+                            self.is_on is not switch_entity.value
+                            or self.icon != switch_entity.icon
+                        ):
                             self.is_on = switch_entity.value
+                            self._attr_icon = switch_entity.icon
                             LOG.info(
                                 "Managed switch %r value set to %r from Neuron full update",
                                 self.unique_id,

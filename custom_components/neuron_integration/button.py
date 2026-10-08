@@ -2,7 +2,7 @@ import logging
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import bus
@@ -40,18 +40,39 @@ class ManagedButton(ButtonEntity):
         automation: str | None,
         unique_id: str,
         friendly_name: str | None,
+        icon: str | None = None,
     ) -> None:
         self.hass = hass
         self.automation = automation
         self.unique_id = unique_id
         self.entity_id = unique_id
         self.name = friendly_name
+        self._attr_icon = icon
 
         # Registry properties: https://developers.home-assistant.io/docs/core/entity#registry-properties
         if self.automation:
             self.device_info = automation_device_info(self.automation)
         else:
             self.device_info = neuron_device_info()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen("neuron", self.event_listener))
+
+    async def event_listener(self, event: Event):
+        try:
+            message = bus.parse_message(event.data)
+        except Exception:
+            LOG.exception("Failed to parse message from Neuron")
+            return
+
+        if isinstance(message, bus.FullUpdate):
+            for button in message.managed_buttons:
+                if button.unique_id == self.unique_id:
+                    if self.icon != button.icon:
+                        self._attr_icon = button.icon
+                        self.async_write_ha_state()
+                    break
 
     async def async_press(self) -> None:
         assert self.unique_id

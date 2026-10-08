@@ -267,6 +267,7 @@ class ManagedEntities:
                     managed_switches.append(
                         bus.ManagedSwitch(
                             unique_id=entity.unique_id,
+                            icon=entity.icon,
                             friendly_name=entity.friendly_name or entity.name,
                             value=entity.value,
                             automation=automation.name if automation else None,
@@ -277,6 +278,7 @@ class ManagedEntities:
                     managed_binary_sensors.append(
                         bus.ManagedBinarySensor(
                             unique_id=entity.unique_id,
+                            icon=entity.icon,
                             friendly_name=entity.friendly_name or entity.name,
                             value=entity.value,
                             automation=automation.name if automation else None,
@@ -288,6 +290,7 @@ class ManagedEntities:
                     managed_sensors.append(
                         bus.ManagedSensor(
                             unique_id=entity.unique_id,
+                            icon=entity.icon,
                             friendly_name=entity.friendly_name or entity.name,
                             value=entity.value,
                             automation=automation.name if automation else None,
@@ -302,6 +305,7 @@ class ManagedEntities:
                     managed_numbers.append(
                         bus.ManagedNumber(
                             unique_id=entity.unique_id,
+                            icon=entity.icon,
                             friendly_name=entity.friendly_name or entity.name,
                             value=entity.value,
                             automation=automation.name if automation else None,
@@ -318,6 +322,7 @@ class ManagedEntities:
                     managed_selects.append(
                         bus.ManagedSelect(
                             unique_id=entity.unique_id,
+                            icon=entity.icon,
                             friendly_name=entity.friendly_name or entity.name,
                             value=entity.value,
                             automation=automation.name if automation else None,
@@ -329,6 +334,7 @@ class ManagedEntities:
                     managed_buttons.append(
                         bus.ManagedButton(
                             unique_id=entity.unique_id,
+                            icon=entity.icon,
                             friendly_name=entity.friendly_name,
                             automation=automation.name if automation else None,
                         )

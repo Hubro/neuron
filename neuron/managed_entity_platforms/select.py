@@ -24,6 +24,7 @@ class ManagedSelect(ManagedEntity):
         friendly_name: str | None = None,
         *,
         options: Sequence[str],
+        icon: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
 
@@ -44,6 +45,7 @@ class ManagedSelect(ManagedEntity):
             unique_id=f"select.{name}",
             initial_value=initial_value,
             friendly_name=friendly_name,
+            icon=icon,
         )
 
     def _validate_value(self, value: str | None):

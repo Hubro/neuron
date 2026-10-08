@@ -35,6 +35,7 @@ class ManagedSensor[T = SensorValue](ManagedEntity):
         state_class: SensorStateClass | None = None,
         unit_of_measurement: str | None = None,
         suggested_unit_of_measurement: str | None = None,
+        icon: str | None = None,
     ):
         assert "." not in name, "Name can not contain period symbol"
 
@@ -47,6 +48,7 @@ class ManagedSensor[T = SensorValue](ManagedEntity):
             unique_id=f"sensor.{name}",
             initial_value=initial_value,
             friendly_name=friendly_name,
+            icon=icon,
         )
 
     @property
