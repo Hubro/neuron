@@ -70,7 +70,7 @@ async def main():
                     asyncio.create_task(_reload_event.wait()),
                     asyncio.create_task(_exit_event.wait()),
                     neuron_task,
-                ],  # type: ignore
+                ],
                 return_when=asyncio.FIRST_COMPLETED,
             )
             _reload_event.clear()

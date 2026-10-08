@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, cast, overload
 
 import orjson
 import websockets
@@ -418,10 +418,26 @@ class Messages:
             "cache": {str(id): messages for id, messages in self._cache.items()},
         }
 
-    def get[T](self, id: int, default: T = None) -> list[dict[str, Any]] | T:
+    @overload
+    def get(self, id: int) -> list[dict[str, Any]] | None: ...
+
+    @overload
+    def get[T](self, id: int, default: T) -> list[dict[str, Any]] | T: ...
+
+    def get[T](
+        self, id: int, default: T | None = None
+    ) -> list[dict[str, Any]] | T | None:
         return self._cache.get(id, default)
 
-    def pop[T](self, id: int, default: T = None) -> list[dict[str, Any]] | T:
+    @overload
+    def pop(self, id: int) -> list[dict[str, Any]] | None: ...
+
+    @overload
+    def pop[T](self, id: int, default: T) -> list[dict[str, Any]] | T: ...
+
+    def pop[T](
+        self, id: int, default: T | None = None
+    ) -> list[dict[str, Any]] | T | None:
         return self._cache.pop(id, default)
 
     def pop_message(self, id: int) -> dict[str, Any] | None:

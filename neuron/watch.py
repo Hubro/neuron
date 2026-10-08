@@ -30,7 +30,7 @@ async def watch_automation_modules(
         set_reload_event()
 
     observer = watchdog.observers.Observer()
-    observer.setName("neuron-automation-module-watcher")
+    observer.name = "neuron-automation-module-watcher"
 
     for path in packages:
         LOG.debug("Watching %s", path)

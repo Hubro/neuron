@@ -32,6 +32,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff.lint]
 ignore = ["F403", "E731"]
 
+[tool.ty.environment]
+python = ".venv"
+
 [tool.pytest]
 python_files = ["*_test.py"]
 testpaths = ["neuron"]

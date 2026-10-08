@@ -843,24 +843,26 @@ class Subscriptions:
             return self._automation_map[key].copy()
 
     @overload
-    def get[T](
-        self, key: int | str | dict[str, Any], default: T = None
-    ) -> Subscription | T:
+    def get(self, key: int | str | dict[str, Any]) -> Subscription | None: ...
+
+    @overload
+    def get[T](self, key: int | str | dict[str, Any], default: T) -> Subscription | T:
         """Returns a subscription by its ID or event/trigger"""
 
     @overload
-    def get[T](self, key: NEURON_CORE, default: T = None) -> set[Subscription] | T:
-        """Returns all Neutron internal subscriptions"""
+    def get(self, key: Automation | NEURON_CORE) -> set[Subscription] | None: ...
 
     @overload
-    def get[T](self, key: Automation, default: T = None) -> set[Subscription] | T:
+    def get[T](
+        self, key: Automation | NEURON_CORE, default: T
+    ) -> set[Subscription] | T:
         """Returns all subscriptions for an automation"""
 
     def get[T](
         self,
         key: int | str | dict[str, Any] | Automation | NEURON_CORE,
-        default: T = None,
-    ) -> Subscription | set[Subscription] | T:
+        default: T | None = None,
+    ) -> Subscription | set[Subscription] | T | None:
         try:
             return self[key]
         except KeyError:
@@ -998,16 +1000,17 @@ class Subscription:
                         del self[automation]
 
     @overload
-    def get[T](self, automation: Automation, default: T = None) -> list[Callable] | T:
-        """Returns all the handlers for this subscription from the given automation"""
+    def get(self, automation: Automation | NEURON_CORE) -> list[Callable] | None: ...
 
     @overload
-    def get[T](self, automation: NEURON_CORE, default: T = None) -> list[Callable] | T:
-        """Returns all Neuron internal handlers for this subscription"""
+    def get[T](
+        self, automation: Automation | NEURON_CORE, default: T
+    ) -> list[Callable] | T:
+        """Returns all the handlers for this subscription from the given automation"""
 
     def get[T](
-        self, automation: Automation | NEURON_CORE, default: T = None
-    ) -> list[Callable] | T:
+        self, automation: Automation | NEURON_CORE, default: T | None = None
+    ) -> list[Callable] | T | None:
         try:
             return self._handlers[automation]
         except KeyError:

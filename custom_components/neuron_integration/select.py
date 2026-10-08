@@ -71,6 +71,7 @@ class ManagedSelect(SelectEntity):
                         break
 
     async def async_select_option(self, option: str) -> None:
+        assert self.unique_id
         if option not in self.options:
             raise ValueError(f"Option must be one of {self.options!r}, got {option!r}")
         if self.current_option == option:

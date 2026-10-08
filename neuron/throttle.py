@@ -34,19 +34,19 @@ def _sync_throttle(seconds: float):
     cooldown_handle: asyncio.Handle | None = None
 
     def decorator[T: Callable](fn: T) -> T:
+        name = getattr(fn, "__name__", type(fn).__name__)
+
         @wraps(fn)
         def wrapped(*args, **kwargs):
             nonlocal cooldown_handle
 
             if cooldown_handle:
-                LOG.debug(
-                    "Ignoring repeated call to %r, still on cooldown", fn.__name__
-                )
+                LOG.debug("Ignoring repeated call to %r, still on cooldown", name)
                 return
 
             LOG.debug(
                 "Executing call to %r, starting cooldown for %r seconds",
-                fn.__name__,
+                name,
                 seconds,
             )
             fn(*args, **kwargs)
@@ -68,19 +68,19 @@ def _async_throttle(seconds: float):
     cooldown_task: asyncio.Task | None = None
 
     def decorator[T: Callable](fn: T) -> T:
+        name = getattr(fn, "__name__", type(fn).__name__)
+
         @wraps(fn)
         async def wrapped(*args, **kwargs):
             nonlocal cooldown_task
 
             if cooldown_task:
-                LOG.debug(
-                    "Ignoring repeated async call to %r, still on cooldown", fn.__name__
-                )
+                LOG.debug("Ignoring repeated async call to %r, still on cooldown", name)
                 return
 
             LOG.debug(
                 "Executing async call to %r, starting cooldown for %r seconds",
-                fn.__name__,
+                name,
                 seconds,
             )
 
@@ -88,7 +88,8 @@ def _async_throttle(seconds: float):
                 await fn(*args, **kwargs)
             except Exception:
                 LOG.exception(
-                    "Unhandled exception in throttled function %r", fn.__qualname__
+                    "Unhandled exception in throttled function %r",
+                    getattr(fn, "__qualname__", name),
                 )
 
             async def cooldown():
@@ -97,7 +98,7 @@ def _async_throttle(seconds: float):
                 cooldown_task = None
 
             cooldown_task = asyncio.create_task(
-                cooldown(), name=f"async_throttle-{fn.__name__}"
+                cooldown(), name=f"async_throttle-{name}"
             )
 
         return cast(T, wrapped)

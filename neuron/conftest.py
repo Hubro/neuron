@@ -15,7 +15,8 @@ def managed_neuron(monkeypatch):
         hass=SimpleNamespace(fire_event=AsyncMock()),
         automations={},
     )
-    neuron.managed_entities = ManagedEntities(neuron)
+    # Only the Neuron attributes used by managed entities are mocked.
+    neuron.managed_entities = ManagedEntities(neuron)  # ty: ignore[invalid-argument-type]
     monkeypatch.setattr(neuron.state, "save", Mock())
     monkeypatch.setattr(api, "_neuron", neuron)
     monkeypatch.setattr(api, "_managed_entities", {})

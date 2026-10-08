@@ -47,10 +47,12 @@ class ManagedNumber(NumberEntity):
         self._attr_native_value = number.value
         self._attr_native_min_value = number.min_value
         self._attr_native_max_value = number.max_value
-        self._attr_native_step = number.step
+        # Home Assistant accepts None to calculate the step from the range.
+        self._attr_native_step = number.step  # ty: ignore[invalid-assignment]
         self._attr_native_unit_of_measurement = number.unit_of_measurement
-        self._attr_device_class = number.device_class
-        self._attr_mode = number.mode
+        # The shared bus uses Home Assistant's enums when deployed here.
+        self._attr_device_class = number.device_class  # ty: ignore[invalid-assignment]
+        self._attr_mode = number.mode  # ty: ignore[invalid-assignment]
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hass.bus.async_listen("neuron", self.event_listener))
@@ -76,6 +78,7 @@ class ManagedNumber(NumberEntity):
                         break
 
     async def async_set_native_value(self, value: float) -> None:
+        assert self.unique_id
         message = bus.NumberValueChanged(unique_id=self.unique_id, value=value)
         if not self.native_min_value <= value <= self.native_max_value:
             raise ValueError(

@@ -24,7 +24,7 @@ async def async_setup_entry(
     del config
 
     LOG.info("Setting up Neuron button platform")
-    LOG.info(f"{async_add_entities=!r} {async_add_entities.__name__=!r}")  # pyright: ignore[reportAttributeAccessIssue]
+    LOG.info("async_add_entities=%r", async_add_entities)
 
     data = neuron_context(hass)
     data.add_button_entities = async_add_entities

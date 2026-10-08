@@ -34,6 +34,8 @@ def _sync_debounce(seconds: float):
     handle: asyncio.Handle | None = None
 
     def decorator[T: Callable](fn: T) -> T:
+        name = getattr(fn, "__name__", type(fn).__name__)
+
         @wraps(fn)
         def wrapped(*args, **kwargs):
             nonlocal handle
@@ -44,10 +46,10 @@ def _sync_debounce(seconds: float):
                 fn(*args, **kwargs)
 
             if handle:
-                LOG.debug("Got repeated call to %r, resetting delay timer", fn.__name__)
+                LOG.debug("Got repeated call to %r, resetting delay timer", name)
                 handle.cancel()
             else:
-                LOG.debug("Delaying call to %r for %r seconds", fn.__name__, seconds)
+                LOG.debug("Delaying call to %r for %r seconds", name, seconds)
 
             handle = asyncio.get_running_loop().call_later(seconds, call)
 
@@ -60,6 +62,8 @@ def _async_debounce(seconds: float):
     task: asyncio.Task | None = None
 
     def decorator[T: Callable](fn: T) -> T:
+        name = getattr(fn, "__name__", type(fn).__name__)
+
         @wraps(fn)
         async def wrapped(*args, **kwargs):
             nonlocal task
@@ -75,20 +79,17 @@ def _async_debounce(seconds: float):
                     await fn(*args, **kwargs)
                 except Exception:
                     LOG.exception(
-                        "Unhandled exception in debounced function %r", fn.__qualname__
+                        "Unhandled exception in debounced function %r",
+                        getattr(fn, "__qualname__", name),
                     )
 
             if task:
-                LOG.debug(
-                    "Got repeated async call to %r, resetting delay timer", fn.__name__
-                )
+                LOG.debug("Got repeated async call to %r, resetting delay timer", name)
                 task.cancel()
             else:
-                LOG.debug(
-                    "Delaying async call to %r for %r seconds", fn.__name__, seconds
-                )
+                LOG.debug("Delaying async call to %r for %r seconds", name, seconds)
 
-            task = asyncio.create_task(call(), name=f"async_debounce-{fn.__name__}")
+            task = asyncio.create_task(call(), name=f"async_debounce-{name}")
 
         return cast(T, wrapped)
 

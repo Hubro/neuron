@@ -202,7 +202,9 @@ async def _subscribe(
     *,
     to: str | dict[str, Any],
 ) -> SubscriptionHandle:
-    get_automation_logger().info("Subscribing handler %r to %r", handler.__name__, to)
+    get_automation_logger().info(
+        "Subscribing handler %r to %r", getattr(handler, "__name__", "???"), to
+    )
     await get_neuron().subscribe(_automation.get(), handler, to=to)
     return (to, handler)
 
@@ -242,7 +244,9 @@ def on_event(event: str = "*", **filter: Any):
                     return
 
             get_automation_logger().info(
-                "Executing event handler: %s", handler.__name__, extra={"data": event}
+                "Executing event handler: %s",
+                getattr(handler, "__name__", "???"),
+                extra={"data": event},
             )
             await handler(*args, **kwargs)
 
@@ -326,7 +330,9 @@ async def unsubscribe(handle: SubscriptionHandle):
     event_or_trigger, handler = handle
 
     get_automation_logger().info(
-        "Unsubscribing handler %r from %r", handler.__name__, event_or_trigger
+        "Unsubscribing handler %r from %r",
+        getattr(handler, "__name__", "???"),
+        event_or_trigger,
     )
 
     await get_neuron().unsubscribe(handler, event_or_trigger)

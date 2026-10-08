@@ -73,7 +73,8 @@ class NeuronIntegrationContext:
                 unique_id=x.unique_id,
                 value=x.value,
                 friendly_name=x.friendly_name,
-                device_class=x.device_class,
+                # The shared bus uses Home Assistant's enums when deployed here.
+                device_class=x.device_class,  # ty: ignore[invalid-argument-type]
                 icon=x.icon,
             )
             for x in binary_sensors

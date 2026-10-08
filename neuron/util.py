@@ -163,7 +163,7 @@ def debounce(seconds: float):
 #         # Run the function in a new task so it won't be cancelled together with
 #         # the delay task
 #         LOG.trace("(delay) Calling function %r now!", fn.__name__)
-#         asyncio.create_task(fn(*args, **kwargs), name=f"delay-{fn.__name__}")  # type: ignore
+#         asyncio.create_task(fn(*args, **kwargs), name=f"delay-{fn.__name__}")
 #     except asyncio.CancelledError:
 #         LOG.trace("(delay) Delay for %r cancelled", fn.__name__)
 #         pass
