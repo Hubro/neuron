@@ -78,7 +78,7 @@ async def main():
             neuron_task.cancel()
             try:
                 await neuron_task
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Keep hot reload alive after a crash.
                 LOG.fatal("Neuron crashed", exc_info=e)
                 await _reload_event.wait()
                 _reload_event.clear()

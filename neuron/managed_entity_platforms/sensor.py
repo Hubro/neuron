@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TypeAlias
 
 from neuron.hass_const import SensorDeviceClass, SensorStateClass
 from neuron.managed_entity_platforms.base import ManagedEntity, ValueChange
 
-SensorValue: TypeAlias = str | int | float | date | datetime | Decimal | None
+type SensorValue = str | int | float | date | datetime | Decimal | None
 
 
 class ManagedSensor[T = SensorValue](ManagedEntity):

@@ -5,6 +5,7 @@ import asyncio
 import importlib
 import sys
 import time
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from contextvars import Context, copy_context
 from dataclasses import asdict, dataclass, field
@@ -14,9 +15,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import (
     Any,
-    Callable,
-    Coroutine,
-    Iterator,
     Self,
     cast,
     overload,
@@ -176,7 +174,7 @@ class Neuron:
             try:
                 await asyncio.wait_for(self._shutdown(), timeout=10)
                 LOG.info("Bye!")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 LOG.error("Failed to shut down gracefully, timeout reached")
 
     def stop(self):
@@ -331,7 +329,7 @@ class Neuron:
                 )
 
                 if automation is NEURON_CORE:
-                    self.ephemeral_tasks.append((task))
+                    self.ephemeral_tasks.append(task)
                 else:
                     automation.tasks.append(task)
             except Exception:
@@ -399,10 +397,7 @@ class Neuron:
                         ):
                             # This is an unsupported state so we crash and exit
                             raise RuntimeError(
-                                "Timed out task {} ({}) is refusing to die".format(
-                                    task.get_name(),
-                                    name,
-                                ),
+                                f"Timed out task {task.get_name()} ({name}) is refusing to die",
                             )
 
                         task.cancel()
@@ -821,23 +816,19 @@ class Subscriptions:
             else:
                 return 2
 
-        for subscription in sorted(self._subscriptions.values(), key=sort_key):
-            yield subscription
+        yield from sorted(self._subscriptions.values(), key=sort_key)
 
     @overload
     def __getitem__(self, key: int | str | dict[str, Any]) -> Subscription:
         """Returns a subscription by its ID or event/trigger"""
-        ...
 
     @overload
     def __getitem__[T](self, key: NEURON_CORE) -> set[Subscription]:
         """Returns all Neutron internal subscriptions"""
-        ...
 
     @overload
     def __getitem__(self, key: Automation) -> set[Subscription]:
         """Returns all subscriptions for an automation"""
-        ...
 
     def __getitem__(
         self, key: int | str | dict[str, Any] | Automation | NEURON_CORE
@@ -856,17 +847,14 @@ class Subscriptions:
         self, key: int | str | dict[str, Any], default: T = None
     ) -> Subscription | T:
         """Returns a subscription by its ID or event/trigger"""
-        ...
 
     @overload
     def get[T](self, key: NEURON_CORE, default: T = None) -> set[Subscription] | T:
         """Returns all Neutron internal subscriptions"""
-        ...
 
     @overload
     def get[T](self, key: Automation, default: T = None) -> set[Subscription] | T:
         """Returns all subscriptions for an automation"""
-        ...
 
     def get[T](
         self,
@@ -960,8 +948,7 @@ class Subscription:
         """Iterate over all handlers"""
 
         for handlers in self._handlers.values():
-            for handler in handlers:
-                yield handler
+            yield from handlers
 
     def __gt__(self, other: Subscription) -> bool:
         return self.id > other.id
@@ -1036,7 +1023,7 @@ class Subscription:
     @property
     def automations(self) -> list[Automation]:
         """Returns all automations with handlers for this subscription"""
-        return [x for x in self._handlers.keys() if isinstance(x, Automation)]
+        return [x for x in self._handlers if isinstance(x, Automation)]
 
     @property
     def handlers(self) -> list[tuple[Automation | NEURON_CORE, Callable]]:

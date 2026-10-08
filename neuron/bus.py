@@ -6,9 +6,10 @@ That way they share the exact same code for message parsing.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Any, Literal, Mapping, TypeAlias
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -30,7 +31,7 @@ except ImportError:
         SensorStateClass,
     )
 
-SensorValue: TypeAlias = str | int | float | date | datetime | Decimal | None
+type SensorValue = str | int | float | date | datetime | Decimal | None
 
 
 class BaseMessage(BaseModel):

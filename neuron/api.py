@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,14 +12,8 @@ from math import floor
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
-    Coroutine,
-    Iterable,
     Literal,
-    Mapping,
     Self,
-    Sequence,
     TypeAlias,
     TypeVar,
     cast,
@@ -41,37 +36,36 @@ if TYPE_CHECKING:
     from neuron.managed_entity_platforms.base import ManagedEntity
 
 __all__ = [
-    "on_state_change",
-    "on_trigger",
-    "on_event",
-    "on_time_pattern",
-    "daily",
-    "unsubscribe",
-    "action",
-    "turn_on",
-    "turn_off",
-    "mqtt_publish",
-    "get_logger",
-    "debounce",
-    "throttle",
+    "BinarySensorDeviceClass",
     "Entity",
-    "ManagedSwitch",
     "ManagedBinarySensor",
-    "ManagedSensor",
+    "ManagedButton",
     "ManagedNumber",
     "ManagedSelect",
-    "ManagedButton",
-    "SensorValue",
-    "StateChange",
-    "ValueChange",
+    "ManagedSensor",
+    "ManagedSwitch",
     "NeuronLogger",
-    "SubscriptionHandle",
-    # Re-export of Home Assistant constants:
-    "BinarySensorDeviceClass",
     "NumberDeviceClass",
     "NumberMode",
     "SensorDeviceClass",
     "SensorStateClass",
+    "SensorValue",
+    "StateChange",
+    "SubscriptionHandle",
+    "ValueChange",
+    "action",
+    "daily",
+    "debounce",
+    "get_logger",
+    "mqtt_publish",
+    "on_event",
+    "on_state_change",
+    "on_time_pattern",
+    "on_trigger",
+    "throttle",
+    "turn_off",
+    "turn_on",
+    "unsubscribe",
 ]
 
 _trigger_handlers: list[tuple[dict, AsyncFunction]] = []
@@ -81,7 +75,8 @@ _managed_entities: dict[str, ManagedEntity] = {}
 
 _neuron: Neuron | None = None
 _automation = ContextVar("automation")
-_logger = ContextVar("logger", default=get_logger(__name__))
+# Loggers are shared by name across contexts.
+_logger = ContextVar("logger", default=get_logger(__name__))  # noqa: B039
 
 
 @overload
@@ -252,7 +247,7 @@ def on_event(event: str = "*", **filter: Any):
             await handler(*args, **kwargs)
 
         # Flag this as an event handler wrapper, causing core to pass "handler_kwargs"
-        setattr(wrapper, "_event_handler_wrapper", True)
+        setattr(wrapper, "_event_handler_wrapper", True)  # noqa: B010
 
         _event_handlers.append((event, wrapper))
 
@@ -766,23 +761,23 @@ class StateChange:
         # }
 
 
-AsyncFunction: TypeAlias = Callable[..., Awaitable[Any]]
-EntityTarget: TypeAlias = str | Entity | Sequence[str | Entity]
-SubscriptionHandle: TypeAlias = tuple[str | dict, AsyncFunction]
+type AsyncFunction = Callable[..., Awaitable[Any]]
+type EntityTarget = str | Entity | Sequence[str | Entity]
+type SubscriptionHandle = tuple[str | dict, AsyncFunction]
 HandlerFn = TypeVar("HandlerFn", default=AsyncFunction)
 Decorator: TypeAlias = Callable[[HandlerFn], HandlerFn]
 
 
 # Platforms import the helpers and types above, so these imports must stay last.
-from neuron.managed_entity_platforms.base import ValueChange  # noqa: E402
-from neuron.managed_entity_platforms.binary_sensor import (  # noqa: E402
+from neuron.managed_entity_platforms.base import ValueChange
+from neuron.managed_entity_platforms.binary_sensor import (
     ManagedBinarySensor,
 )
-from neuron.managed_entity_platforms.button import ManagedButton  # noqa: E402
-from neuron.managed_entity_platforms.number import ManagedNumber  # noqa: E402
-from neuron.managed_entity_platforms.select import ManagedSelect  # noqa: E402
-from neuron.managed_entity_platforms.sensor import (  # noqa: E402
+from neuron.managed_entity_platforms.button import ManagedButton
+from neuron.managed_entity_platforms.number import ManagedNumber
+from neuron.managed_entity_platforms.select import ManagedSelect
+from neuron.managed_entity_platforms.sensor import (
     ManagedSensor,
     SensorValue,
 )
-from neuron.managed_entity_platforms.switch import ManagedSwitch  # noqa: E402
+from neuron.managed_entity_platforms.switch import ManagedSwitch

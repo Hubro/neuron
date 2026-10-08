@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Iterator, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from neuron.debounce import debounce
 from neuron.managed_entity_platforms.base import ManagedEntity

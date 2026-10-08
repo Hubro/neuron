@@ -87,24 +87,23 @@ class ManagedSensor(SensorEntity):
 
             case bus.FullUpdate():
                 for sensor_entity in message.managed_sensors:
-                    if sensor_entity.unique_id == self.unique_id:
-                        if (
-                            self._attr_native_value != sensor_entity.value
-                            or self.native_unit_of_measurement
-                            != sensor_entity.unit_of_measurement
-                            or self.icon != sensor_entity.icon
-                        ):
-                            self._attr_native_value = sensor_entity.value
-                            self._attr_icon = sensor_entity.icon
-                            self._attr_native_unit_of_measurement = (
-                                sensor_entity.unit_of_measurement
-                            )
-                            LOG.info(
-                                "Managed sensor %r value set to %r from Neuron full update",
-                                self.unique_id,
-                                sensor_entity.value,
-                            )
-                            self.schedule_update_ha_state()
+                    if sensor_entity.unique_id == self.unique_id and (
+                        self._attr_native_value != sensor_entity.value
+                        or self.native_unit_of_measurement
+                        != sensor_entity.unit_of_measurement
+                        or self.icon != sensor_entity.icon
+                    ):
+                        self._attr_native_value = sensor_entity.value
+                        self._attr_icon = sensor_entity.icon
+                        self._attr_native_unit_of_measurement = (
+                            sensor_entity.unit_of_measurement
+                        )
+                        LOG.info(
+                            "Managed sensor %r value set to %r from Neuron full update",
+                            self.unique_id,
+                            sensor_entity.value,
+                        )
+                        self.schedule_update_ha_state()
 
     async def async_update(self):
         LOG.info("Updating sensor %r", self)

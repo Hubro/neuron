@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import neuron.api as api
+from neuron import api
 from neuron.api import AsyncFunction
 from neuron.managed_entity_platforms.base import ManagedEntity
 

@@ -5,11 +5,12 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from queue import Queue, ShutDown
 from time import sleep
-from typing import Mapping, cast
+from typing import cast
 
 import orjson
 import requests
@@ -128,13 +129,13 @@ def setup_file_logging():
     file_log_path = config.json_log_file
 
     if not file_log_path:
-        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        suffix = datetime.now().astimezone().strftime("%Y-%m-%d_%H%M")
         file_log_path = config.data_dir / f"neuron_{suffix}.log"
 
     if not file_log_path.parent.exists():
         try:
             file_log_path.parent.mkdir()
-        except Exception:
+        except OSError:
             logging.root.exception(
                 f"Log dir {file_log_path.parent!r} doesn't exist and could not be created"
             )
@@ -142,7 +143,7 @@ def setup_file_logging():
 
     try:
         handler = logging.FileHandler(file_log_path)
-    except Exception:
+    except OSError:
         logging.root.exception("Failed to set up file logging")
         return
 
@@ -165,7 +166,7 @@ class NeuronLogger(logging.Logger):
         self,
         msg: object,
         *args: object,
-        exc_info: logging._ExcInfoType = None,
+        exc_info: logging._ExcInfoType | None = None,
         stack_info: bool = False,
         stacklevel: int = 1,
         extra: Mapping[str, object] | None = None,
@@ -235,7 +236,7 @@ class VictoriaLogsHandler(logging.Handler):
             except ShutDown:
                 return
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Keep the log worker alive.
                 get_logger(__name__).warning(
                     "Failed to push log line to VictoriaLogs",
                     exc_info=e,
@@ -296,12 +297,10 @@ class VictoriaLogFilter(logging.Filter):
     """Filters out log lines from the victoria log handler thread to prevent loops"""
 
     def filter(self, record: logging.LogRecord):
-        if (
+        return not (
             "victoria-logs-handler" in (record.threadName or "")
-        ) and record.levelno < logging.WARNING:
-            return False
-
-        return True
+            and record.levelno < logging.WARNING
+        )
 
 
 logging.setLoggerClass(NeuronLogger)

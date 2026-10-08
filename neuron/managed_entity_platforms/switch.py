@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, overload
 
-import neuron.api as api
+from neuron import api
 from neuron.api import AsyncFunction, Decorator
 from neuron.managed_entity_platforms.base import ManagedEntity, ValueChange
 from neuron.util import filter_keyword_args

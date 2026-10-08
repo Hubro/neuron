@@ -38,7 +38,7 @@ class EventEmitter:
     def flag(self) -> asyncio.Event:
         """Like event, but needs to be manually cleared"""
         evt = self.event()
-        setattr(evt, "_is_flag", True)
+        setattr(evt, "_is_flag", True)  # noqa: B010
         return evt
 
     def emit(self):

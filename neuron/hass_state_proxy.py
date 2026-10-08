@@ -1,8 +1,9 @@
 import asyncio
+from collections.abc import Hashable, Iterable
 from functools import cached_property, reduce
 from time import perf_counter
 from types import MappingProxyType
-from typing import Any, Hashable, Iterable
+from typing import Any
 
 from .hass import HASS, State
 from .logging import get_logger

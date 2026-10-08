@@ -3,7 +3,7 @@ from __future__ import annotations
 from math import isfinite
 from typing import overload
 
-import neuron.api as api
+from neuron import api
 from neuron.api import AsyncFunction, Decorator
 from neuron.hass_const import NumberDeviceClass, NumberMode
 from neuron.managed_entity_platforms.base import ManagedEntity, ValueChange

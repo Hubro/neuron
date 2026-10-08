@@ -5,10 +5,11 @@ import asyncio
 import inspect
 import sys
 import threading
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from functools import wraps
 from types import FrameType
-from typing import Any, Callable
+from typing import Any
 
 import orjson
 from typing_extensions import Sentinel

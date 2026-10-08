@@ -1,7 +1,8 @@
 import asyncio
+from collections.abc import Callable
 from functools import wraps
 from inspect import iscoroutinefunction
-from typing import Callable, cast
+from typing import cast
 
 from neuron.logging import get_logger
 

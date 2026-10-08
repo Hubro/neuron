@@ -86,16 +86,15 @@ class ManagedBinarySensor(BinarySensorEntity):
 
             case bus.FullUpdate():
                 for binary_sensor_entity in message.managed_binary_sensors:
-                    if binary_sensor_entity.unique_id == self.unique_id:
-                        if (
-                            self._attr_is_on is not binary_sensor_entity.value
-                            or self.icon != binary_sensor_entity.icon
-                        ):
-                            self._attr_is_on = binary_sensor_entity.value
-                            self._attr_icon = binary_sensor_entity.icon
-                            LOG.info(
-                                "Managed binary sensor %r value set to %r from Neuron full update",
-                                self.unique_id,
-                                binary_sensor_entity.value,
-                            )
-                            self.schedule_update_ha_state()
+                    if binary_sensor_entity.unique_id == self.unique_id and (
+                        self._attr_is_on is not binary_sensor_entity.value
+                        or self.icon != binary_sensor_entity.icon
+                    ):
+                        self._attr_is_on = binary_sensor_entity.value
+                        self._attr_icon = binary_sensor_entity.icon
+                        LOG.info(
+                            "Managed binary sensor %r value set to %r from Neuron full update",
+                            self.unique_id,
+                            binary_sensor_entity.value,
+                        )
+                        self.schedule_update_ha_state()

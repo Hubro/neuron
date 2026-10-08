@@ -1,5 +1,6 @@
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.button import ButtonEntity
@@ -37,7 +38,7 @@ class NeuronIntegrationContext:
 
         from .switch import ManagedSwitch
 
-        existing_switches = set(x.unique_id for x in self.switches)
+        existing_switches = {x.unique_id for x in self.switches}
 
         new_switch_entities = [
             ManagedSwitch(
@@ -63,7 +64,7 @@ class NeuronIntegrationContext:
 
         from .binary_sensor import ManagedBinarySensor
 
-        existing_binary_sensors = set(x.unique_id for x in self.binary_sensors)
+        existing_binary_sensors = {x.unique_id for x in self.binary_sensors}
 
         new_binary_sensor_entities = [
             ManagedBinarySensor(
@@ -90,7 +91,7 @@ class NeuronIntegrationContext:
 
         from .sensor import ManagedSensor
 
-        existing_sensors = set(x.unique_id for x in self.sensors)
+        existing_sensors = {x.unique_id for x in self.sensors}
 
         new_sensor_entities = [
             ManagedSensor(
@@ -117,7 +118,7 @@ class NeuronIntegrationContext:
 
         from .button import ManagedButton
 
-        existing_buttons = set(x.unique_id for x in self.buttons)
+        existing_buttons = {x.unique_id for x in self.buttons}
 
         new_button_entities = [
             ManagedButton(

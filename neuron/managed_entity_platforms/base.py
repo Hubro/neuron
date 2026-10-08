@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-import neuron.api as api
+from neuron import api
 from neuron.util import filter_keyword_args
 
 

@@ -1,6 +1,7 @@
 import asyncio
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
-from typing import AsyncGenerator, Callable, cast
+from typing import cast
 
 import watchdog.events
 import watchdog.observers
@@ -14,7 +15,7 @@ LOG = get_logger(__name__)
 
 async def watch_automation_modules(
     packages: list[Path],
-) -> AsyncGenerator[list[str], None]:
+) -> AsyncGenerator[list[str]]:
     loop = asyncio.get_running_loop()
     touched = set()
     reload_event = asyncio.Event()

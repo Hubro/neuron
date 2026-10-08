@@ -91,19 +91,18 @@ class ManagedSwitch(SwitchEntity):
 
             case bus.FullUpdate():
                 for switch_entity in message.managed_switches:
-                    if switch_entity.unique_id == self.unique_id:
-                        if (
-                            self.is_on is not switch_entity.value
-                            or self.icon != switch_entity.icon
-                        ):
-                            self.is_on = switch_entity.value
-                            self._attr_icon = switch_entity.icon
-                            LOG.info(
-                                "Managed switch %r value set to %r from Neuron full update",
-                                self.unique_id,
-                                switch_entity.value,
-                            )
-                            self.schedule_update_ha_state()
+                    if switch_entity.unique_id == self.unique_id and (
+                        self.is_on is not switch_entity.value
+                        or self.icon != switch_entity.icon
+                    ):
+                        self.is_on = switch_entity.value
+                        self._attr_icon = switch_entity.icon
+                        LOG.info(
+                            "Managed switch %r value set to %r from Neuron full update",
+                            self.unique_id,
+                            switch_entity.value,
+                        )
+                        self.schedule_update_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         if self.is_on:

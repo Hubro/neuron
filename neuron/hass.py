@@ -184,7 +184,7 @@ class HASS:
             try:
                 await self.connect()
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Retry all connection failures.
                 LOG.error("Failed to reconnect to Home Assistant: %s", e)
                 await asyncio.sleep(wait)
 
