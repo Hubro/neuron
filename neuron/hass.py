@@ -6,12 +6,14 @@ from typing import Any, TypedDict, cast
 import orjson
 import websockets
 
-from .config import DEV
 from .event_emitter import EventEmitter
 from .logging import get_logger
 from .util import stringify
 
 LOG = get_logger(__name__)
+
+HEARTBEAT_INTERVAL = 10
+HEARTBEAT_TIMEOUT = 2
 
 
 class HASS:
@@ -39,6 +41,8 @@ class HASS:
 
         self._ws: websockets.ClientConnection | None = None
         self._new_message_event = self.messages.on_new_message.event()
+        self._heartbeat_subscription_id: int | None = None
+        self._heartbeat_deadline = 0.0
 
     def _dump_state(self) -> dict[str, Any]:
         return {
@@ -58,56 +62,118 @@ class HASS:
         return self._ws
 
     async def connect(self):
+        self.ready.clear()
+        self._heartbeat_subscription_id = None
         LOG.info("Connecting to Home Assistant")
 
         LOG.debug("Opening Websocket connection: %s", self.websocket_uri)
         self._ws = await websockets.connect(uri=self.websocket_uri, max_size=10_000_000)
 
-        LOG.debug("Waiting for auth request...")
-        request = orjson.loads(await self._ws.recv())
-        assert request["type"] == "auth_required"
+        try:
+            LOG.debug("Waiting for auth request...")
+            request = orjson.loads(await self.ws.recv())
+            assert request["type"] == "auth_required"
 
-        LOG.debug("Sending auth message...")
-        await self.ws.send(
-            orjson.dumps(
-                {
-                    "type": "auth",
-                    "access_token": self.token,
-                }
-            ),
-            text=True,
-        )
-        response = orjson.loads(await self.ws.recv())
-        LOG.debug("Response from Home Assistant: %r", response)
+            LOG.debug("Sending auth message...")
+            await self.ws.send(
+                orjson.dumps(
+                    {
+                        "type": "auth",
+                        "access_token": self.token,
+                    }
+                ),
+                text=True,
+            )
+            response = orjson.loads(await self.ws.recv())
+            LOG.debug("Response from Home Assistant: %r", response)
 
-        if response["type"] == "auth_ok":
-            LOG.info("Home Assistant authentication successful")
-        elif response["type"] == "auth_invalid":
-            raise RuntimeError("Home Assistant authentication failed, check token")
-        else:
-            raise RuntimeError("Unexpected response: %r", response)
+            if response["type"] == "auth_ok":
+                LOG.info("Home Assistant authentication successful")
+            elif response["type"] == "auth_invalid":
+                raise RuntimeError("Home Assistant authentication failed, check token")
+            else:
+                raise RuntimeError("Unexpected response: %r", response)
 
-        LOG.debug("Enabling coalesced messages feature")
-        await self.ws.send(
-            orjson.dumps(
-                {
-                    "id": self.messages.next_id(),
-                    "type": "supported_features",
-                    "features": {"coalesce_messages": 1},
-                }
-            ),
-            text=True,
-        )
-        response = orjson.loads(await self.ws.recv())
-        LOG.debug("Response from Home Assistant: %r", response)
-        assert response["success"]
+            LOG.debug("Enabling coalesced messages feature")
+            feature_id = self.messages.next_id()
+            await self.ws.send(
+                orjson.dumps(
+                    {
+                        "id": feature_id,
+                        "type": "supported_features",
+                        "features": {"coalesce_messages": 1},
+                    }
+                ),
+                text=True,
+            )
+            response = await self._receive_result(feature_id)
+            LOG.debug("Response from Home Assistant: %r", response)
+            assert response["success"]
+
+            LOG.debug("Subscribing to Home Assistant heartbeat")
+            self._heartbeat_subscription_id = self.messages.next_id()
+            async with asyncio.timeout(HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT):
+                await self.ws.send(
+                    orjson.dumps(
+                        {
+                            "id": self._heartbeat_subscription_id,
+                            "type": "subscribe_trigger",
+                            "trigger": {
+                                "platform": "time_pattern",
+                                "seconds": f"/{HEARTBEAT_INTERVAL}",
+                            },
+                        }
+                    ),
+                    text=True,
+                )
+                response = await self._receive_result(self._heartbeat_subscription_id)
+
+            if not response["success"]:
+                raise RuntimeError(
+                    f"Failed to subscribe to Home Assistant heartbeat: {response['error']['message']}"
+                )
+
+            self._heartbeat_deadline = (
+                asyncio.get_running_loop().time()
+                + HEARTBEAT_INTERVAL
+                + HEARTBEAT_TIMEOUT
+            )
+        except BaseException:
+            self.ws.transport.abort()
+            await self.ws.wait_closed()
+            self._ws = None
+            raise
+
+    async def _receive_result(self, id: int) -> dict[str, Any]:
+        while True:
+            messages = orjson.loads(await self.ws.recv())
+            if not isinstance(messages, list):
+                messages = [messages]
+
+            response = None
+            for message in messages:
+                if message["id"] == id and message["type"] == "result":
+                    response = message
+                elif message["id"] != self._heartbeat_subscription_id:
+                    self.messages.add(message)
+
+            if response is not None:
+                return response
 
     async def disconnect(self):
-        await self.ws.close()
-        await self.ws.wait_closed()
+        self.ready.clear()
+        if self._ws is not None:
+            await self.ws.close()
+            await self.ws.wait_closed()
+            self._ws = None
 
     async def reconnect(self):
         self.ready.clear()
+        if self._ws is not None:
+            # A dead socket may never finish a closing handshake.
+            self.ws.transport.abort()
+            await self.ws.wait_closed()
+            self._ws = None
         self.messages.reset()
         LOG.info("Attempting to reconnect to Home Assistant...")
 
@@ -126,11 +192,6 @@ class HASS:
 
         LOG.info("Connection re-established!")
 
-        # FIXME: Ref: https://github.com/home-assistant/home-assistant-js-websocket/issues/555
-        if not DEV:
-            LOG.warning("Waiting 30 seconds before proceeding")
-            await asyncio.sleep(30)
-
         self.on_reconnect.emit()
 
     async def message_handler_task(self):
@@ -141,19 +202,42 @@ class HASS:
                 self.ready.set()
 
                 try:
-                    async for msg in self.ws:
-                        messages = orjson.loads(msg)
+                    async with asyncio.timeout_at(
+                        self._heartbeat_deadline
+                    ) as heartbeat_timeout:
+                        async for msg in self.ws:
+                            messages = orjson.loads(msg)
 
-                        if not isinstance(messages, list):
-                            messages = [messages]
+                            if not isinstance(messages, list):
+                                messages = [messages]
 
-                        for message in messages:
-                            LOG.trace(
-                                "Got message from Home Assistant: %r",
-                                message,
-                                extra={"data": message},
-                            )
-                            self.messages.add(message)
+                            for message in messages:
+                                LOG.trace(
+                                    "Got message from Home Assistant: %r",
+                                    message,
+                                    extra={"data": message},
+                                )
+                                if (
+                                    message["id"] == self._heartbeat_subscription_id
+                                    and message["type"] == "event"
+                                ):
+                                    self._heartbeat_deadline = (
+                                        asyncio.get_running_loop().time()
+                                        + HEARTBEAT_INTERVAL
+                                        + HEARTBEAT_TIMEOUT
+                                    )
+                                    heartbeat_timeout.reschedule(
+                                        self._heartbeat_deadline
+                                    )
+                                else:
+                                    self.messages.add(message)
+
+                except TimeoutError:
+                    LOG.error(
+                        "No Home Assistant heartbeat for %s seconds, reconnecting",
+                        HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT,
+                    )
+                    await self.reconnect()
 
                 except websockets.ConnectionClosed as e:
                     LOG.error("Lost connection with Home Assistant: %s", e)
@@ -167,6 +251,8 @@ class HASS:
             await process_messages()
         except asyncio.CancelledError:
             return
+        finally:
+            self.ready.clear()
 
     async def message(self, msg: dict[str, Any]) -> Any:
         """Sends a message to Home Assistant and returns the response"""
