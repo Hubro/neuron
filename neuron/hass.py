@@ -473,3 +473,5 @@ class State(TypedDict):
     entity_id: str
     state: str
     attributes: dict[str, Any]
+    last_changed: str
+    last_updated: str

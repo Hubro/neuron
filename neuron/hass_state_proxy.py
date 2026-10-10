@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Hashable, Iterable
+from datetime import datetime
 from functools import cached_property, reduce
 from time import perf_counter
 from types import MappingProxyType
@@ -29,6 +30,8 @@ class HASSStateProxy:
     _subs: dict[int, set[str]]  # subscription ID -> associated entity IDs
     _states: dict[str, str]  # entity_id -> state
     _attributes: dict[str, dict[str, Any]]  # entity_id -> asstibutes
+    _last_changed: dict[str, datetime]
+    _last_updated: dict[str, datetime]
     _task: asyncio.Task | None
     _lock: asyncio.Lock
 
@@ -63,6 +66,8 @@ class HASSStateProxy:
         self._subs = {}
         self._states = {}
         self._attributes = {}
+        self._last_changed = {}
+        self._last_updated = {}
         self._task = None
         self._lock = asyncio.Lock()
         self._stop = asyncio.Event()
@@ -107,6 +112,8 @@ class HASSStateProxy:
                         self._subs = {}
                         self._states = {}
                         self._attributes = {}
+                        self._last_changed = {}
+                        self._last_updated = {}
                         bust_cached_props(self, "subscribed_entities")
 
                         await self._fetch_initial_states()
@@ -176,6 +183,18 @@ class HASSStateProxy:
 
         return MappingProxyType(self._attributes[entity_id])
 
+    def get_last_changed(self, entity_id: str) -> datetime:
+        if entity_id not in self.watched_entities:
+            raise KeyError(f"Entity is not watched: {entity_id!r}")
+
+        return self._last_changed[entity_id]
+
+    def get_last_updated(self, entity_id: str) -> datetime:
+        if entity_id not in self.watched_entities:
+            raise KeyError(f"Entity is not watched: {entity_id!r}")
+
+        return self._last_updated[entity_id]
+
     async def all_states(self, force_refresh=False) -> dict[str, State]:
         """Returns all states from HASS
 
@@ -205,6 +224,12 @@ class HASSStateProxy:
             if entity not in self._states:
                 self._states[entity] = hass_states[entity]["state"]
                 self._attributes[entity] = hass_states[entity]["attributes"]
+                self._last_changed[entity] = datetime.fromisoformat(
+                    hass_states[entity]["last_changed"]
+                )
+                self._last_updated[entity] = datetime.fromisoformat(
+                    hass_states[entity]["last_updated"]
+                )
                 LOG.info(
                     "Set initial state for %r: %r | attributes=%r",
                     entity,
@@ -267,6 +292,12 @@ class HASSStateProxy:
         entity_id = trigger["entity_id"]
         state = self._states[entity_id] = trigger["to_state"]["state"]
         attrs = self._attributes[entity_id] = trigger["to_state"]["attributes"]
+        self._last_changed[entity_id] = datetime.fromisoformat(
+            trigger["to_state"]["last_changed"]
+        )
+        self._last_updated[entity_id] = datetime.fromisoformat(
+            trigger["to_state"]["last_updated"]
+        )
 
         LOG.trace(
             "Got state update for entity %r: %r | attributes=%r",

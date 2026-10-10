@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from math import floor
 from typing import (
@@ -515,6 +515,30 @@ class Entity:
     @property
     def attributes(self) -> Mapping[str, Any]:
         return get_neuron().hass_state_proxy.get_attributes(self.entity_id)
+
+    @property
+    def last_changed(self) -> datetime:
+        return get_neuron().hass_state_proxy.get_last_changed(self.entity_id)
+
+    @property
+    def last_updated(self) -> datetime:
+        return get_neuron().hass_state_proxy.get_last_updated(self.entity_id)
+
+    def has_been(
+        self,
+        state: str,
+        *,
+        duration: timedelta | int | float,  # noqa: PYI041
+    ) -> bool:
+        """Returns True if the entity has held this state for the given duration.
+
+        Numeric duration values are interpreted as seconds.
+        """
+
+        if not isinstance(duration, timedelta):
+            duration = timedelta(seconds=duration)
+
+        return self.state == state and datetime.now(UTC) - self.last_changed >= duration
 
     @property
     def is_locked(self) -> bool:
