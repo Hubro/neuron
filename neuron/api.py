@@ -254,6 +254,7 @@ def on_event(event: str = "*", **filter: Any):
         setattr(wrapper, "_event_handler_wrapper", True)  # noqa: B010
 
         _event_handlers.append((event, wrapper))
+        return handler
 
     return decorator
 
