@@ -54,6 +54,7 @@ __all__ = [
     "SubscriptionHandle",
     "ValueChange",
     "action",
+    "block_concurrency",
     "daily",
     "debounce",
     "get_logger",
@@ -188,9 +189,11 @@ def on_trigger(
     """
 
     if handler:
+        setattr(handler, "_neuron_is_trigger_handler", True)  # noqa: B010
         return _subscribe(handler, to=trigger)
 
     def decorator(handler: AsyncFunction):
+        setattr(handler, "_neuron_is_trigger_handler", True)  # noqa: B010
         _trigger_handlers.append((trigger, handler))
         return handler
 
@@ -230,6 +233,8 @@ def on_event(event: str = "*", **filter: Any):
     # TODO: Allow dynamic invocation, as with on_trigger
 
     def decorator(handler: AsyncFunction):
+        setattr(handler, "_neuron_is_event_handler", True)  # noqa: B010
+
         @wraps(handler)
         async def wrapper(handler_kwargs, *args, **kwargs):
             event = handler_kwargs["event"]
@@ -446,6 +451,74 @@ def get_neuron() -> Neuron:
 def get_automation_logger() -> NeuronLogger:
     """Return the logger for the current automation."""
     return _logger.get()
+
+
+@overload
+def block_concurrency[T: AsyncFunction](mode: T, /) -> T: ...
+
+
+@overload
+def block_concurrency(mode: Literal["skip"] = "skip") -> Decorator: ...
+
+
+def block_concurrency(
+    mode: AsyncFunction | Literal["skip"] = "skip",
+) -> AsyncFunction | Decorator:
+    """Block concurrent calls of the given function
+
+    The default (and currently only) strategy is "skip", which causes repeated
+    calls to be dropped if the function is already running.
+
+    Must be applied *before* (closer to the function definition) than handler
+    registering decorators.
+    """
+
+    def decorator[T: AsyncFunction](fn: T) -> T:
+        # Blocking concurrency on a debounced function does not work, since
+        # debounce schedules the function to run later
+        if getattr(fn, "_neuron_is_debounced", False):
+            raise ValueError(
+                "Can not block concurrency on a debounced function, "
+                "swap the order of the decorators"
+            )
+
+        # Blocking concurrency *after* a function has already been registered
+        # as a handler is definitely a bug
+        for marker in ["_neuron_is_trigger_handler", "_neuron_is_event_handler"]:
+            if getattr(fn, marker, False):
+                raise ValueError(
+                    "Blocking concurrency must be done *before* "
+                    "registering a function as a handler"
+                )
+
+        running = False
+
+        @wraps(fn)
+        async def wrapper(*args, **kwargs):
+            nonlocal running
+
+            if running:
+                get_automation_logger().debug(
+                    "Skipping call to %r, still running",
+                    getattr(fn, "__qualname__", type(fn).__name__),
+                )
+                return None
+
+            running = True
+            try:
+                return await fn(*args, **kwargs)
+            finally:
+                running = False
+
+        return cast(T, wrapper)
+
+    if callable(mode):
+        return decorator(mode)
+
+    if mode != "skip":
+        raise ValueError(f"Unsupported concurrency mode: {mode!r}")
+
+    return decorator
 
 
 def _reset():

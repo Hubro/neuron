@@ -23,9 +23,12 @@ def debounce(seconds: float):
 
     def decorator(fn):
         if iscoroutinefunction(fn):
-            return _async_debounce(seconds)(fn)
+            wrapped = _async_debounce(seconds)(fn)
         else:
-            return _sync_debounce(seconds)(fn)
+            wrapped = _sync_debounce(seconds)(fn)
+
+        setattr(wrapped, "_neuron_is_debounced", True)  # noqa: B010
+        return wrapped
 
     return decorator
 
